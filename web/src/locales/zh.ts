@@ -2135,7 +2135,7 @@ NER：使用 spaCy NER 和基于规则的关键词提取来抽取实体和关系
       queritTimeRangeTip:
         '可填写 d7、w2、m1、y1 等相对时间，或 2026-01-01to2026-01-31 形式的绝对日期范围。',
       queritCountryInclude: '包含的国家',
-      queritCountryIncludeTip: '优先返回与指定国家代码相关的结果。',
+      queritCountryIncludeTip: '返回与指定国家相关的结果。',
       queritLanguageInclude: '包含的语言',
       queritLanguageIncludeTip: '仅返回指定语言代码对应的结果。',
       queritListPlaceholder: '输入内容后按 Enter 添加',

@@ -2488,7 +2488,7 @@ Best for: Documents with flowing, contextually connected content — such as boo
         'Use a relative range such as d7, w2, m1, or y1, or an absolute range such as 2026-01-01to2026-01-31.',
       queritCountryInclude: 'Countries to include',
       queritCountryIncludeTip:
-        'Prioritize results associated with the specified country codes.',
+        'Return results associated with the specified countries.',
       queritLanguageInclude: 'Languages to include',
       queritLanguageIncludeTip:
         'Return results in the specified language codes.',
