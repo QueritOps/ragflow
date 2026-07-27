@@ -1,15 +1,20 @@
 import { useEffect } from 'react';
 import { UseFormReturn, useWatch } from 'react-hook-form';
 import useGraphStore from '../../store';
-import { serializeQueritFormValues } from './utils';
+import { validateQueritFormValuesForPersistence } from './utils';
 
 export function useWatchFormChange(id?: string, form?: UseFormReturn<any>) {
   const values = useWatch({ control: form?.control });
   const updateNodeForm = useGraphStore((state) => state.updateNodeForm);
 
   useEffect(() => {
-    if (id && form?.formState.isValid) {
-      updateNodeForm(id, serializeQueritFormValues(form.getValues()));
+    if (id && form) {
+      const nextValues = validateQueritFormValuesForPersistence(
+        form.getValues(),
+      );
+      if (nextValues) {
+        updateNodeForm(id, nextValues);
+      }
     }
-  }, [form, form?.formState.isValid, id, updateNodeForm, values]);
+  }, [form, id, updateNodeForm, values]);
 }

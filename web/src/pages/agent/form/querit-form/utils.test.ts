@@ -2,6 +2,7 @@ import {
   QueritFormSchema,
   deserializeQueritFormValues,
   serializeQueritFormValues,
+  validateQueritFormValuesForPersistence,
 } from './utils';
 
 describe('Querit form contract', () => {
@@ -61,6 +62,15 @@ describe('Querit form contract', () => {
       ).toBe(false);
     },
   );
+
+  it.each(['', '   '])('rejects an empty dynamic list item %p', (listItem) => {
+    expect(
+      QueritFormSchema.safeParse({
+        ...validValues,
+        site_include: [{ value: listItem }],
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('Querit form persistence', () => {
@@ -127,6 +137,62 @@ describe('Querit form persistence', () => {
     ).toMatchObject({
       count: 5,
       chunks_per_doc: 2,
+    });
+  });
+
+  it('does not produce persisted values when the current form is invalid', () => {
+    expect(
+      validateQueritFormValuesForPersistence({
+        api_key: '',
+        query: 'begin.query',
+        count: 0,
+        chunks_per_doc: 3,
+        site_include: [],
+        site_exclude: [],
+        time_range: '',
+        country_include: [],
+        language_include: [],
+      }),
+    ).toBeUndefined();
+  });
+
+  it('produces normalized persisted values when the current form is valid', () => {
+    expect(
+      validateQueritFormValuesForPersistence({
+        api_key: '',
+        query: 'begin.query',
+        count: '5',
+        chunks_per_doc: '2',
+        site_include: [{ value: 'docs.example.com' }],
+        site_exclude: [],
+        time_range: 'w1',
+        country_include: [],
+        language_include: [{ value: 'en' }],
+      }),
+    ).toMatchObject({
+      count: 5,
+      chunks_per_doc: 2,
+      site_include: ['docs.example.com'],
+      language_include: ['en'],
+    });
+  });
+
+  it('trims dynamic list values before persistence', () => {
+    expect(
+      validateQueritFormValuesForPersistence({
+        api_key: '',
+        query: 'begin.query',
+        count: 5,
+        chunks_per_doc: 2,
+        site_include: [{ value: '  docs.example.com  ' }],
+        site_exclude: [],
+        time_range: '',
+        country_include: [],
+        language_include: [{ value: ' en ' }],
+      }),
+    ).toMatchObject({
+      site_include: ['docs.example.com'],
+      language_include: ['en'],
     });
   });
 

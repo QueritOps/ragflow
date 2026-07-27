@@ -5,7 +5,7 @@ export const QueritTimeRangePattern =
 
 const dynamicStringListSchema = z.array(
   z.object({
-    value: z.string(),
+    value: z.string().trim().min(1),
   }),
 );
 
@@ -55,4 +55,18 @@ export function serializeQueritFormValues(values: QueritFormRecord) {
     country_include: toStringArray(values.country_include),
     language_include: toStringArray(values.language_include),
   };
+}
+
+export function validateQueritFormValuesForPersistence(
+  values: QueritFormRecord,
+) {
+  const result = QueritFormSchema.safeParse(values);
+  if (!result.success) {
+    return undefined;
+  }
+
+  return serializeQueritFormValues({
+    ...values,
+    ...result.data,
+  });
 }
