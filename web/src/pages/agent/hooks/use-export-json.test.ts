@@ -70,4 +70,23 @@ describe('clearSensitiveFields', () => {
     expect(dsl.graph.nodes[0].data.form.api_key).toBe('graph-secret');
     expect(dsl.components.querit.obj.params.api_key).toBe('component-secret');
   });
+
+  it('does not change standalone graph export behavior for other tools', () => {
+    const dsl = {
+      graph: {
+        nodes: [
+          {
+            data: {
+              label: Operator.TavilySearch,
+              form: {
+                api_key: 'existing-tavily-key',
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    expect(clearSensitiveFields(dsl)).toEqual(dsl);
+  });
 });
