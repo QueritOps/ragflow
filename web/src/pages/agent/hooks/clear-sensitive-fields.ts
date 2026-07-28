@@ -24,7 +24,7 @@ export function clearSensitiveFields<T>(obj: T): T {
     }
 
     if (
-      apiKeyOperators.includes(get(value, 'data.label')) &&
+      get(value, 'data.label') === Operator.QueritSearch &&
       get(value, 'data.form.api_key')
     ) {
       return {
