@@ -45,8 +45,8 @@ const (
 )
 
 var (
-	queritRelativeTimeRangePattern = regexp.MustCompile(`^[dm][1-9][0-9]*$`)
-	queritDateRangePattern         = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})(?:,|\.\.)(\d{4}-\d{2}-\d{2})$`)
+	queritRelativeTimeRangePattern = regexp.MustCompile(`^[dwmy][1-9][0-9]*$`)
+	queritDateRangePattern         = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}to\d{4}-\d{2}-\d{2}$`)
 	queritNewlinePattern           = regexp.MustCompile(`\n+`)
 )
 
@@ -182,7 +182,7 @@ func (q *QueritTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 			},
 			"time_range": {
 				Type:     schema.String,
-				Desc:     "Relative time range such as d7 or m1, or an explicit date range.",
+				Desc:     "Relative time range such as d7, w1, m3, or y1, or YYYY-MM-DDtoYYYY-MM-DD.",
 				Required: false,
 			},
 			"country_include": {
@@ -314,22 +314,13 @@ func validateQueritParams(params queritParams) error {
 		return fmt.Errorf("chunks_per_doc must be between 1 and 3")
 	}
 	if !isValidQueritTimeRange(strings.TrimSpace(params.TimeRange)) {
-		return fmt.Errorf("time_range must be dN, mN, or a valid YYYY-MM-DD date range")
+		return fmt.Errorf("time_range must use dN, wN, mN, yN, or YYYY-MM-DDtoYYYY-MM-DD")
 	}
 	return nil
 }
 
 func isValidQueritTimeRange(value string) bool {
-	if value == "" || queritRelativeTimeRangePattern.MatchString(value) {
-		return true
-	}
-	matches := queritDateRangePattern.FindStringSubmatch(value)
-	if len(matches) != 3 {
-		return false
-	}
-	start, startErr := time.Parse(time.DateOnly, matches[1])
-	end, endErr := time.Parse(time.DateOnly, matches[2])
-	return startErr == nil && endErr == nil && !start.After(end)
+	return value == "" || queritRelativeTimeRangePattern.MatchString(value) || queritDateRangePattern.MatchString(value)
 }
 
 func buildQueritRequest(params queritParams) queritRequest {
@@ -382,7 +373,7 @@ func (q *QueritTool) ComponentSpec() ComponentSpec {
 			"chunks_per_doc":   "Number of snippets per document.",
 			"site_include":     "Sites that search results must include.",
 			"site_exclude":     "Sites that search results must exclude.",
-			"time_range":       "Relative or explicit date range.",
+			"time_range":       "dN, wN, mN, yN, or YYYY-MM-DDtoYYYY-MM-DD.",
 			"country_include":  "Countries that search results must include.",
 			"language_include": "Languages that search results must include.",
 		},

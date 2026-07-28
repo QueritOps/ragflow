@@ -82,7 +82,7 @@ func TestQueritBuildsFiltersAndMergesRuntimeOverrides(t *testing.T) {
 		ChunksPerDoc:    2,
 		SiteInclude:     []string{"stored.example"},
 		SiteExclude:     []string{"blocked.example"},
-		TimeRange:       "m1",
+		TimeRange:       "w1",
 		CountryInclude:  []string{"CN"},
 		LanguageInclude: []string{"zh"},
 	}
@@ -100,7 +100,7 @@ func TestQueritBuildsFiltersAndMergesRuntimeOverrides(t *testing.T) {
 	if _, exists := sites["include"]; exists || len(sites["exclude"].([]any)) != 1 {
 		t.Fatalf("explicit empty site_include did not clear node default: %#v", sites)
 	}
-	if filters["timeRange"].(map[string]any)["date"] != "m1" {
+	if filters["timeRange"].(map[string]any)["date"] != "w1" {
 		t.Fatalf("timeRange = %#v", filters["timeRange"])
 	}
 	if filters["geo"].(map[string]any)["countries"].(map[string]any)["include"].([]any)[0] != "CN" {
@@ -151,7 +151,7 @@ func TestQueritValidatesParametersBeforeRequest(t *testing.T) {
 		`{"query":"x","api_key":"k","count":0}`,
 		`{"query":"x","api_key":"k","chunks_per_doc":4}`,
 		`{"query":"x","api_key":"k","time_range":"last week"}`,
-		`{"query":"x","api_key":"k","time_range":"2026-02-30,2026-03-01"}`,
+		`{"query":"x","api_key":"k","time_range":"2026-01-01,2026-01-31"}`,
 		`{"query":"x","api_key":"k","site_include":[1]}`,
 	}
 	for _, args := range tests {
@@ -159,6 +159,41 @@ func TestQueritValidatesParametersBeforeRequest(t *testing.T) {
 			out, err := NewQueritTool().InvokableRun(context.Background(), args)
 			if err != nil || !strings.Contains(out, "_ERROR") {
 				t.Fatalf("InvokableRun(%s) = %s, %v", args, out, err)
+			}
+		})
+	}
+}
+
+func TestQueritTimeRangeContract(t *testing.T) {
+	tests := []struct {
+		value string
+		valid bool
+	}{
+		{value: "", valid: true},
+		{value: "d7", valid: true},
+		{value: "w2", valid: true},
+		{value: "m3", valid: true},
+		{value: "y1", valid: true},
+		{value: "2026-01-01to2026-01-31", valid: true},
+		{value: "d0", valid: false},
+		{value: "7d", valid: false},
+		{value: "2026-01-01,2026-01-31", valid: false},
+		{value: "2026-01-01..2026-01-31", valid: false},
+		{value: "2026-01-01-2026-01-31", valid: false},
+		{value: "last week", valid: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.value, func(t *testing.T) {
+			if got := isValidQueritTimeRange(test.value); got != test.valid {
+				t.Fatalf("isValidQueritTimeRange(%q) = %v, want %v", test.value, got, test.valid)
+			}
+			if !test.valid || test.value == "" {
+				return
+			}
+			request := buildQueritRequest(queritParams{TimeRange: test.value})
+			if request.Filters == nil || request.Filters.TimeRange == nil || request.Filters.TimeRange.Date != test.value {
+				t.Fatalf("time range request mapping = %#v", request.Filters)
 			}
 		})
 	}
@@ -214,6 +249,28 @@ func TestQueritHTTPFailuresAreSoftErrors(t *testing.T) {
 		out, err := NewQueritToolWith(helper).InvokableRun(context.Background(), `{"query":"x","api_key":"k"}`)
 		if err != nil || calls.Load() != 3 || strings.Contains(out, "_ERROR") {
 			t.Fatalf("result = %s, err = %v, calls = %d", out, err, calls.Load())
+		}
+	})
+
+	t.Run("persistent server errors are soft and redact the environment key", func(t *testing.T) {
+		var calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			calls.Add(1)
+			writer.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer server.Close()
+		helper := NewHTTPHelperWithRetry(RetryConfig{
+			MaxAttempts: 3,
+			BaseBackoff: time.Nanosecond,
+			MaxBackoff:  time.Nanosecond,
+		}).WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)})
+		querit := NewQueritToolWithEnvKey(helper, func() string { return "environment-secret" })
+		out, err := querit.InvokableRun(context.Background(), `{"query":"x"}`)
+		if err != nil || calls.Load() != 3 || !strings.Contains(out, "_ERROR") || !strings.Contains(out, "500") {
+			t.Fatalf("result = %s, err = %v, calls = %d", out, err, calls.Load())
+		}
+		if strings.Contains(out, "environment-secret") {
+			t.Fatalf("soft error exposed environment API key: %s", out)
 		}
 	})
 
