@@ -173,11 +173,13 @@ func (q *QueritTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 			},
 			"site_include": {
 				Type:     schema.Array,
+				ElemInfo: &schema.ParameterInfo{Type: schema.String},
 				Desc:     "Sites that search results must include.",
 				Required: false,
 			},
 			"site_exclude": {
 				Type:     schema.Array,
+				ElemInfo: &schema.ParameterInfo{Type: schema.String},
 				Desc:     "Sites that search results must exclude.",
 				Required: false,
 			},
@@ -188,11 +190,13 @@ func (q *QueritTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 			},
 			"country_include": {
 				Type:     schema.Array,
+				ElemInfo: &schema.ParameterInfo{Type: schema.String},
 				Desc:     "Countries that search results must include.",
 				Required: false,
 			},
 			"language_include": {
 				Type:     schema.Array,
+				ElemInfo: &schema.ParameterInfo{Type: schema.String},
 				Desc:     "Languages that search results must include.",
 				Required: false,
 			},
@@ -281,9 +285,6 @@ func (q *QueritTool) InvokableRun(ctx context.Context, argsJSON string, _ ...too
 
 func mergeQueritParams(defaults, runtimeParams queritParams, provided map[string]json.RawMessage) queritParams {
 	merged := defaults
-	if _, ok := provided["api_key"]; ok {
-		merged.APIKey = runtimeParams.APIKey
-	}
 	if _, ok := provided["query"]; ok {
 		merged.Query = runtimeParams.Query
 	}
@@ -360,12 +361,18 @@ func decodeQueritResponse(raw []byte) (map[string]any, error) {
 	if err := decoder.Decode(&decoded); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("decode response: expected exactly one JSON value")
+		}
+		return nil, fmt.Errorf("decode response: trailing content: %w", err)
+	}
 	response, ok := decoded.(map[string]any)
 	if !ok || response == nil {
 		return nil, fmt.Errorf("decode response: expected a JSON object")
 	}
 	resultsValue, exists := response["results"]
-	if !exists || resultsValue == nil {
+	if !exists {
 		return response, nil
 	}
 	results, ok := resultsValue.(map[string]any)
@@ -373,7 +380,7 @@ func decodeQueritResponse(raw []byte) (map[string]any, error) {
 		return nil, fmt.Errorf("decode response: results must be a JSON object")
 	}
 	resultValue, exists := results["result"]
-	if !exists || resultValue == nil {
+	if !exists {
 		return response, nil
 	}
 	if _, ok := resultValue.([]any); !ok {

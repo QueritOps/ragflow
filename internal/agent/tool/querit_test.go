@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -43,8 +44,9 @@ func TestQueritBuildsMinimalRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	querit := NewQueritToolWith(NewHTTPHelper().WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)}))
-	out, err := querit.InvokableRun(context.Background(), `{"query":"ragflow","api_key":"key-test"}`)
+	helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteQueritHostTransport(server.URL)})
+	querit := newQueritTool(helper, func() string { return "" }, queritParams{APIKey: "key-test"}, nil)
+	out, err := querit.InvokableRun(context.Background(), `{"query":"ragflow"}`)
 	if err != nil {
 		t.Fatalf("InvokableRun: %v", err)
 	}
@@ -87,7 +89,7 @@ func TestQueritBuildsFiltersAndMergesRuntimeOverrides(t *testing.T) {
 		CountryInclude:  []string{"CN"},
 		LanguageInclude: []string{"zh"},
 	}
-	helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)})
+	helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteQueritHostTransport(server.URL)})
 	querit := newQueritTool(helper, func() string { return "" }, defaults, func(context.Context, int) bool { return true })
 	_, err := querit.InvokableRun(context.Background(), `{"query":"ragflow","count":5,"site_include":[],"language_include":["en"]}`)
 	if err != nil {
@@ -122,7 +124,7 @@ func TestQueritAPIKeyResolutionAndEmptyQuery(t *testing.T) {
 	}))
 	defer server.Close()
 
-	helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)})
+	helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteQueritHostTransport(server.URL)})
 	querit := NewQueritToolWithEnvKey(helper, func() string { return "environment-secret" })
 	if _, err := querit.InvokableRun(context.Background(), `{"query":"ragflow"}`); err != nil {
 		t.Fatalf("InvokableRun: %v", err)
@@ -145,6 +147,25 @@ func TestQueritAPIKeyResolutionAndEmptyQuery(t *testing.T) {
 	}
 	if !strings.Contains(out, "api_key") || strings.Contains(out, "environment-secret") || calls.Load() != 1 {
 		t.Fatalf("missing-key result = %s, calls = %d", out, calls.Load())
+	}
+}
+
+func TestQueritRuntimeAPIKeyCannotOverrideNodeConfiguration(t *testing.T) {
+	var authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		authorization = request.Header.Get("Authorization")
+		_, _ = writer.Write([]byte(`{"results":{"result":[]}}`))
+	}))
+	defer server.Close()
+
+	helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteQueritHostTransport(server.URL)})
+	querit := newQueritTool(helper, func() string { return "" }, queritParams{APIKey: "stored-key"}, nil)
+	out, err := querit.InvokableRun(context.Background(), `{"query":"ragflow","api_key":"runtime-key"}`)
+	if err != nil || strings.Contains(out, "_ERROR") {
+		t.Fatalf("InvokableRun = %s, %v", out, err)
+	}
+	if authorization != "Bearer stored-key" {
+		t.Fatalf("Authorization = %q, want stored node key", authorization)
 	}
 }
 
@@ -175,9 +196,9 @@ func TestQueritExplicitNullChunksPerDocIsOmitted(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"results":{"result":[]}}`))
 	}))
 	defer server.Close()
-	helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)})
-	querit := NewQueritToolWith(helper)
-	out, err := querit.InvokableRun(context.Background(), `{"query":"x","api_key":"k","chunks_per_doc":null}`)
+	helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteQueritHostTransport(server.URL)})
+	querit := NewQueritToolWithEnvKey(helper, func() string { return "k" })
+	out, err := querit.InvokableRun(context.Background(), `{"query":"x","chunks_per_doc":null}`)
 	if err != nil || strings.Contains(out, "_ERROR") {
 		t.Fatalf("InvokableRun = %s, %v", out, err)
 	}
@@ -188,11 +209,11 @@ func TestQueritExplicitNullChunksPerDocIsOmitted(t *testing.T) {
 
 func TestQueritValidatesParametersBeforeRequest(t *testing.T) {
 	tests := []string{
-		`{"query":"x","api_key":"k","count":0}`,
-		`{"query":"x","api_key":"k","chunks_per_doc":4}`,
-		`{"query":"x","api_key":"k","time_range":"last week"}`,
-		`{"query":"x","api_key":"k","time_range":"2026-01-01,2026-01-31"}`,
-		`{"query":"x","api_key":"k","site_include":[1]}`,
+		`{"query":"x","count":0}`,
+		`{"query":"x","chunks_per_doc":4}`,
+		`{"query":"x","time_range":"last week"}`,
+		`{"query":"x","time_range":"2026-01-01,2026-01-31"}`,
+		`{"query":"x","site_include":[1]}`,
 	}
 	for _, args := range tests {
 		t.Run(args, func(t *testing.T) {
@@ -248,8 +269,9 @@ func TestQueritHTTPFailuresAreSoftErrors(t *testing.T) {
 			_, _ = writer.Write([]byte(`{"message":"do not expose upstream bodies"}`))
 		}))
 		defer server.Close()
-		querit := NewQueritToolWith(NewHTTPHelper().WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)}))
-		out, err := querit.InvokableRun(context.Background(), `{"query":"x","api_key":"secret-key"}`)
+		helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteQueritHostTransport(server.URL)})
+		querit := NewQueritToolWithEnvKey(helper, func() string { return "secret-key" })
+		out, err := querit.InvokableRun(context.Background(), `{"query":"x"}`)
 		if err != nil || calls.Load() != 1 || !strings.Contains(out, "401") || strings.Contains(out, "secret-key") {
 			t.Fatalf("result = %s, err = %v, calls = %d", out, err, calls.Load())
 		}
@@ -262,9 +284,9 @@ func TestQueritHTTPFailuresAreSoftErrors(t *testing.T) {
 			writer.WriteHeader(http.StatusTooManyRequests)
 		}))
 		defer server.Close()
-		helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)})
-		querit := newQueritTool(helper, nil, queritParams{}, func(context.Context, int) bool { return true })
-		out, err := querit.InvokableRun(context.Background(), `{"query":"x","api_key":"secret-key"}`)
+		helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteQueritHostTransport(server.URL)})
+		querit := newQueritTool(helper, nil, queritParams{APIKey: "secret-key"}, func(context.Context, int) bool { return true })
+		out, err := querit.InvokableRun(context.Background(), `{"query":"x"}`)
 		if err != nil || calls.Load() != queritMaxAttempts || !strings.Contains(out, "429") || strings.Contains(out, "secret-key") {
 			t.Fatalf("result = %s, err = %v, calls = %d", out, err, calls.Load())
 		}
@@ -285,8 +307,8 @@ func TestQueritHTTPFailuresAreSoftErrors(t *testing.T) {
 			MaxAttempts: 3,
 			BaseBackoff: time.Nanosecond,
 			MaxBackoff:  time.Nanosecond,
-		}).WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)})
-		out, err := NewQueritToolWith(helper).InvokableRun(context.Background(), `{"query":"x","api_key":"k"}`)
+		}).WithClient(&http.Client{Transport: rewriteQueritHostTransport(server.URL)})
+		out, err := NewQueritToolWithEnvKey(helper, func() string { return "k" }).InvokableRun(context.Background(), `{"query":"x"}`)
 		if err != nil || calls.Load() != 3 || strings.Contains(out, "_ERROR") {
 			t.Fatalf("result = %s, err = %v, calls = %d", out, err, calls.Load())
 		}
@@ -303,7 +325,7 @@ func TestQueritHTTPFailuresAreSoftErrors(t *testing.T) {
 			MaxAttempts: 3,
 			BaseBackoff: time.Nanosecond,
 			MaxBackoff:  time.Nanosecond,
-		}).WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)})
+		}).WithClient(&http.Client{Transport: rewriteQueritHostTransport(server.URL)})
 		querit := NewQueritToolWithEnvKey(helper, func() string { return "environment-secret" })
 		out, err := querit.InvokableRun(context.Background(), `{"query":"x"}`)
 		if err != nil || calls.Load() != 3 || !strings.Contains(out, "_ERROR") || !strings.Contains(out, "500") {
@@ -328,11 +350,10 @@ func TestQueritHTTPFailuresAreSoftErrors(t *testing.T) {
 				return fmt.Errorf("transport rejected Bearer %s", test.secret)
 			})})
 			querit := NewQueritToolWithEnvKey(helper, func() string { return test.secret })
-			args := `{"query":"x"}`
 			if test.node {
-				args = fmt.Sprintf(`{"query":"x","api_key":%q}`, test.secret)
+				querit = newQueritTool(helper, func() string { return "" }, queritParams{APIKey: test.secret}, nil)
 			}
-			out, err := querit.InvokableRun(context.Background(), args)
+			out, err := querit.InvokableRun(context.Background(), `{"query":"x"}`)
 			if err != nil || !strings.Contains(out, "_ERROR") || !strings.Contains(out, "[REDACTED]") {
 				t.Fatalf("result = %s, err = %v", out, err)
 			}
@@ -352,7 +373,7 @@ func TestQueritHTTPFailuresAreSoftErrors(t *testing.T) {
 			calls.Add(1)
 			return errors.New("offline")
 		})})
-		out, err := NewQueritToolWith(helper).InvokableRun(context.Background(), `{"query":"x","api_key":"k"}`)
+		out, err := NewQueritToolWithEnvKey(helper, func() string { return "k" }).InvokableRun(context.Background(), `{"query":"x"}`)
 		if err != nil || calls.Load() != 3 || !strings.Contains(out, "_ERROR") {
 			t.Fatalf("result = %s, err = %v, calls = %d", out, err, calls.Load())
 		}
@@ -364,8 +385,9 @@ func TestQueritRejectsInvalidJSONResponse(t *testing.T) {
 		_, _ = writer.Write([]byte(`not-json`))
 	}))
 	defer server.Close()
-	querit := NewQueritToolWith(NewHTTPHelper().WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)}))
-	out, err := querit.InvokableRun(context.Background(), `{"query":"x","api_key":"k"}`)
+	helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteQueritHostTransport(server.URL)})
+	querit := NewQueritToolWithEnvKey(helper, func() string { return "k" })
+	out, err := querit.InvokableRun(context.Background(), `{"query":"x"}`)
 	if err != nil || !strings.Contains(out, "decode response") {
 		t.Fatalf("result = %s, err = %v", out, err)
 	}
@@ -379,7 +401,10 @@ func TestQueritRejectsMalformedResponseShapes(t *testing.T) {
 	}{
 		{name: "top-level array", body: `[]`, want: "JSON object"},
 		{name: "results is not an object", body: `{"results":[]}`, want: "results must be a JSON object"},
+		{name: "results is null", body: `{"results":null}`, want: "results must be a JSON object"},
 		{name: "result is not an array", body: `{"results":{"result":{}}}`, want: "results.result must be a JSON array"},
+		{name: "result is null", body: `{"results":{"result":null}}`, want: "results.result must be a JSON array"},
+		{name: "trailing content", body: `{"results":{"result":[]}} trailing`, want: "trailing content"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -387,8 +412,9 @@ func TestQueritRejectsMalformedResponseShapes(t *testing.T) {
 				_, _ = writer.Write([]byte(test.body))
 			}))
 			defer server.Close()
-			querit := NewQueritToolWith(NewHTTPHelper().WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)}))
-			out, err := querit.InvokableRun(context.Background(), `{"query":"x","api_key":"k"}`)
+			helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteQueritHostTransport(server.URL)})
+			querit := NewQueritToolWithEnvKey(helper, func() string { return "k" })
+			out, err := querit.InvokableRun(context.Background(), `{"query":"x"}`)
 			if err != nil || !strings.Contains(out, "_ERROR") || !strings.Contains(out, test.want) {
 				t.Fatalf("result = %s, err = %v", out, err)
 			}
@@ -396,15 +422,16 @@ func TestQueritRejectsMalformedResponseShapes(t *testing.T) {
 	}
 }
 
-func TestQueritAcceptsMissingOrNullResultContainers(t *testing.T) {
-	for _, body := range []string{`{}`, `{"results":null}`, `{"results":{}}`, `{"results":{"result":null}}`} {
+func TestQueritAcceptsMissingResultContainers(t *testing.T) {
+	for _, body := range []string{`{}`, `{"results":{}}`} {
 		t.Run(body, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 				_, _ = writer.Write([]byte(body))
 			}))
 			defer server.Close()
-			querit := NewQueritToolWith(NewHTTPHelper().WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)}))
-			out, err := querit.InvokableRun(context.Background(), `{"query":"x","api_key":"k"}`)
+			helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteQueritHostTransport(server.URL)})
+			querit := NewQueritToolWithEnvKey(helper, func() string { return "k" })
+			out, err := querit.InvokableRun(context.Background(), `{"query":"x"}`)
 			if err != nil || strings.Contains(out, "_ERROR") {
 				t.Fatalf("result = %s, err = %v", out, err)
 			}
@@ -481,10 +508,62 @@ func TestQueritInfoDoesNotExposeAPIKey(t *testing.T) {
 	if strings.Contains(string(encoded), "api_key") {
 		t.Fatalf("Info exposed API key: %s", encoded)
 	}
+	jsonSchema, err := info.ParamsOneOf.ToJSONSchema()
+	if err != nil {
+		t.Fatalf("ToJSONSchema: %v", err)
+	}
+	rawSchema, err := json.Marshal(jsonSchema)
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	var paramsSchema map[string]any
+	if err := json.Unmarshal(rawSchema, &paramsSchema); err != nil {
+		t.Fatalf("decode schema: %v", err)
+	}
+	properties, ok := paramsSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties = %#v", paramsSchema["properties"])
+	}
+	for _, name := range []string{"site_include", "site_exclude", "country_include", "language_include"} {
+		property, ok := properties[name].(map[string]any)
+		if !ok {
+			t.Fatalf("%s schema = %#v", name, properties[name])
+		}
+		items, ok := property["items"].(map[string]any)
+		if !ok || items["type"] != "string" {
+			t.Fatalf("%s items schema = %#v", name, property["items"])
+		}
+	}
 }
 
 type roundTripperErrorFunc func(*http.Request) error
 
 func (f roundTripperErrorFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return nil, f(request)
+}
+
+func rewriteQueritHostTransport(serverURL string) http.RoundTripper {
+	target, err := url.Parse(serverURL)
+	if err != nil {
+		panic("rewriteQueritHostTransport: bad server URL: " + err.Error())
+	}
+	return &queritHostSwapTransport{
+		inner:  http.DefaultTransport,
+		host:   target.Host,
+		scheme: target.Scheme,
+	}
+}
+
+type queritHostSwapTransport struct {
+	inner  http.RoundTripper
+	host   string
+	scheme string
+}
+
+func (transport *queritHostSwapTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	cloned := request.Clone(request.Context())
+	cloned.URL.Scheme = transport.scheme
+	cloned.URL.Host = transport.host
+	cloned.Host = transport.host
+	return transport.inner.RoundTrip(cloned)
 }

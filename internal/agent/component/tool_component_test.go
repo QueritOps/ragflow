@@ -493,7 +493,7 @@ func TestToolBackedComponentQueritIntegration(t *testing.T) {
 		cloned.URL.Host = target.Host
 		return http.DefaultTransport.RoundTrip(cloned)
 	})})
-	querit := agenttool.NewQueritToolWith(helper)
+	querit := agenttool.NewQueritToolWithEnvKey(helper, func() string { return "key" })
 	component := &ToolBackedComponent{name: "QueritSearch", tool: querit, spec: querit.ComponentSpec()}
 	state := runtime.NewCanvasState("run-querit", "task-querit")
 	empty, err := component.Invoke(context.Background(), nil, map[string]any{"query": ""})
@@ -504,7 +504,7 @@ func TestToolBackedComponentQueritIntegration(t *testing.T) {
 	if serverCalls != 0 || empty["formalized_content"] != "" || !emptyJSONOK || len(emptyJSON) != 0 {
 		t.Fatalf("empty query result = %#v, server calls = %d", empty, serverCalls)
 	}
-	out, err := component.Invoke(runtime.WithState(context.Background(), state), nil, map[string]any{"query": "ragflow", "api_key": "key"})
+	out, err := component.Invoke(runtime.WithState(context.Background(), state), nil, map[string]any{"query": "ragflow"})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
 	}
@@ -524,6 +524,13 @@ func TestToolBackedComponentQueritIntegration(t *testing.T) {
 	chunks := state.GetRetrievalChunks()
 	if len(chunks) != 1 || chunks[0]["document_name"] != "RAGFlow" || chunks[0]["similarity"] != 1 {
 		t.Fatalf("recorded references = %#v", chunks)
+	}
+}
+
+func TestParseToolEnvelopeLosslessRejectsTrailingContent(t *testing.T) {
+	out := parseToolEnvelopeLossless(`{"results":{"result":[]}} trailing`)
+	if out["_raw"] == nil {
+		t.Fatalf("trailing content was accepted: %#v", out)
 	}
 }
 
