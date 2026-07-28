@@ -559,7 +559,7 @@ func buildQueritTool(params map[string]any) (einotool.BaseTool, error) {
 		if !valid || chunksPerDoc < 1 || chunksPerDoc > 3 {
 			return nil, fmt.Errorf("agent tool: tool %q requires integer node-level param chunks_per_doc within [1, 3]", "querit_search")
 		}
-		defaults.ChunksPerDoc = chunksPerDoc
+		defaults.ChunksPerDoc = queritInt(chunksPerDoc)
 	}
 	listFields := map[string]*[]string{
 		"site_include":     &defaults.SiteInclude,

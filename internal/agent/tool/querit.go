@@ -47,6 +47,7 @@ const (
 var (
 	queritRelativeTimeRangePattern = regexp.MustCompile(`^[dwmy][1-9][0-9]*$`)
 	queritDateRangePattern         = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}to\d{4}-\d{2}-\d{2}$`)
+	queritDataImagePattern         = regexp.MustCompile(`!?\[[a-z]+\]\(data:image/png;base64,[ 0-9A-Za-z/_=+\-]+\)`)
 	queritNewlinePattern           = regexp.MustCompile(`\n+`)
 )
 
@@ -54,7 +55,7 @@ type queritParams struct {
 	APIKey          string   `json:"api_key"`
 	Query           string   `json:"query"`
 	Count           int      `json:"count"`
-	ChunksPerDoc    int      `json:"chunks_per_doc"`
+	ChunksPerDoc    *int     `json:"chunks_per_doc"`
 	SiteInclude     []string `json:"site_include"`
 	SiteExclude     []string `json:"site_exclude"`
 	TimeRange       string   `json:"time_range"`
@@ -65,7 +66,7 @@ type queritParams struct {
 type queritRequest struct {
 	Query        string         `json:"query"`
 	Count        int            `json:"count"`
-	ChunksPerDoc int            `json:"chunksPerDoc"`
+	ChunksPerDoc *int           `json:"chunksPerDoc,omitempty"`
 	Filters      *queritFilters `json:"filters,omitempty"`
 }
 
@@ -137,8 +138,8 @@ func newQueritTool(
 	if defaults.Count == 0 {
 		defaults.Count = 10
 	}
-	if defaults.ChunksPerDoc == 0 {
-		defaults.ChunksPerDoc = 3
+	if defaults.ChunksPerDoc == nil {
+		defaults.ChunksPerDoc = queritInt(3)
 	}
 	if retryWait == nil {
 		retryWait = waitForQueritRetry
@@ -202,20 +203,28 @@ func (q *QueritTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 // InvokableRun performs a Querit search. All expected operational failures are
 // returned as soft-error JSON with a nil Go error so an Agent run can continue.
 func (q *QueritTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.Option) (string, error) {
-	var runtimeParams queritParams
-	if err := json.Unmarshal([]byte(argsJSON), &runtimeParams); err != nil {
-		return queritErrorJSON(fmt.Errorf("parse arguments: %w", err)), nil
-	}
 	provided := make(map[string]json.RawMessage)
 	if err := json.Unmarshal([]byte(argsJSON), &provided); err != nil {
 		return queritErrorJSON(fmt.Errorf("parse arguments: %w", err)), nil
 	}
+	queryJSON, hasQuery := provided["query"]
+	if !hasQuery || strings.TrimSpace(string(queryJSON)) == "null" {
+		return queritErrorJSON(fmt.Errorf("query must be provided as a string")), nil
+	}
+	var query string
+	if err := json.Unmarshal(queryJSON, &query); err != nil {
+		return queritErrorJSON(fmt.Errorf("query must be provided as a string")), nil
+	}
+	var runtimeParams queritParams
+	if err := json.Unmarshal([]byte(argsJSON), &runtimeParams); err != nil {
+		return queritErrorJSON(fmt.Errorf("parse arguments: %w", err)), nil
+	}
 	params := mergeQueritParams(q.defaults, runtimeParams, provided)
-	if strings.TrimSpace(params.Query) == "" {
-		return `{"results":{"result":[]}}`, nil
+	if params.Query == "" {
+		return `{}`, nil
 	}
 	if err := validateQueritParams(params); err != nil {
-		return queritErrorJSON(err), nil
+		return queritErrorJSON(err, params.APIKey), nil
 	}
 
 	apiKey := strings.TrimSpace(params.APIKey)
@@ -228,7 +237,7 @@ func (q *QueritTool) InvokableRun(ctx context.Context, argsJSON string, _ ...too
 
 	body, err := json.Marshal(buildQueritRequest(params))
 	if err != nil {
-		return queritErrorJSON(fmt.Errorf("encode request: %w", err)), nil
+		return queritErrorJSON(fmt.Errorf("encode request: %w", err), apiKey), nil
 	}
 	for attempt := 1; attempt <= queritMaxAttempts; attempt++ {
 		resp, requestErr := q.helper.Do(
@@ -240,38 +249,34 @@ func (q *QueritTool) InvokableRun(ctx context.Context, argsJSON string, _ ...too
 			map[string]string{"Authorization": "Bearer " + apiKey},
 		)
 		if requestErr != nil {
-			return queritErrorJSON(fmt.Errorf("request failed: %w", requestErr)), nil
+			return queritErrorJSON(fmt.Errorf("request failed: %w", requestErr), apiKey), nil
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 			if attempt == queritMaxAttempts || !q.retryWait(ctx, attempt) {
-				return queritErrorJSON(fmt.Errorf("upstream returned %d after %d attempts", resp.StatusCode, attempt)), nil
+				return queritErrorJSON(fmt.Errorf("upstream returned %d after %d attempts", resp.StatusCode, attempt), apiKey), nil
 			}
 			continue
 		}
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
-			return queritErrorJSON(fmt.Errorf("upstream returned %d", resp.StatusCode)), nil
+			return queritErrorJSON(fmt.Errorf("upstream returned %d", resp.StatusCode), apiKey), nil
 		}
 
 		raw, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			return queritErrorJSON(fmt.Errorf("read response: %w", readErr)), nil
+			return queritErrorJSON(fmt.Errorf("read response: %w", readErr), apiKey), nil
 		}
-		var response map[string]any
-		if err := json.Unmarshal(raw, &response); err != nil {
-			return queritErrorJSON(fmt.Errorf("decode response: %w", err)), nil
-		}
-		if response == nil {
-			return queritErrorJSON(fmt.Errorf("decode response: expected a JSON object")), nil
+		if _, err := decodeQueritResponse(raw); err != nil {
+			return queritErrorJSON(err, apiKey), nil
 		}
 		return string(raw), nil
 	}
 
-	return queritErrorJSON(fmt.Errorf("request exhausted retries")), nil
+	return queritErrorJSON(fmt.Errorf("request exhausted retries"), apiKey), nil
 }
 
 func mergeQueritParams(defaults, runtimeParams queritParams, provided map[string]json.RawMessage) queritParams {
@@ -310,7 +315,7 @@ func validateQueritParams(params queritParams) error {
 	if params.Count < 1 {
 		return fmt.Errorf("count must be at least 1")
 	}
-	if params.ChunksPerDoc < 1 || params.ChunksPerDoc > 3 {
+	if params.ChunksPerDoc != nil && (*params.ChunksPerDoc < 1 || *params.ChunksPerDoc > 3) {
 		return fmt.Errorf("chunks_per_doc must be between 1 and 3")
 	}
 	if !isValidQueritTimeRange(strings.TrimSpace(params.TimeRange)) {
@@ -348,6 +353,35 @@ func buildQueritRequest(params queritParams) queritRequest {
 	return request
 }
 
+func decodeQueritResponse(raw []byte) (map[string]any, error) {
+	var decoded any
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	response, ok := decoded.(map[string]any)
+	if !ok || response == nil {
+		return nil, fmt.Errorf("decode response: expected a JSON object")
+	}
+	resultsValue, exists := response["results"]
+	if !exists || resultsValue == nil {
+		return response, nil
+	}
+	results, ok := resultsValue.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("decode response: results must be a JSON object")
+	}
+	resultValue, exists := results["result"]
+	if !exists || resultValue == nil {
+		return response, nil
+	}
+	if _, ok := resultValue.([]any); !ok {
+		return nil, fmt.Errorf("decode response: results.result must be a JSON array")
+	}
+	return response, nil
+}
+
 func waitForQueritRetry(ctx context.Context, attempt int) bool {
 	delay := 200 * time.Millisecond
 	for current := 1; current < attempt; current++ {
@@ -366,6 +400,7 @@ func waitForQueritRetry(ctx context.Context, attempt int) bool {
 // ComponentSpec returns the QueritSearch Canvas-facing metadata.
 func (q *QueritTool) ComponentSpec() ComponentSpec {
 	return ComponentSpec{
+		PreserveJSONNumbers: true,
 		Inputs: map[string]string{
 			"api_key":          "Querit API key. Uses QUERIT_API_KEY when empty.",
 			"query":            "Search query.",
@@ -404,7 +439,15 @@ func (q *QueritTool) BuildReferences(_ context.Context, response map[string]any)
 		title := queritText(result["title"])
 		resultURL := queritText(result["url"])
 		content := queritText(result["snippet"])
-		documentID := strconv.FormatInt(queritHashInt(strings.Join([]string{resultURL, title, content}, "\x00"), 100000000), 10)
+		if content == "" {
+			continue
+		}
+		content = queritDataImagePattern.ReplaceAllString(content, "")
+		content = truncateQueritRunes(content, 10000)
+		if content == "" {
+			continue
+		}
+		documentID := strconv.FormatInt(queritHashInt(content, 100000000), 10)
 		displayID := strconv.FormatInt(queritHashInt(documentID, 500), 10)
 		chunks = append(chunks, map[string]any{
 			"id":            displayID,
@@ -498,6 +541,19 @@ func queritHashInt(value string, modulus int64) int64 {
 	return new(big.Int).Mod(number, big.NewInt(modulus)).Int64()
 }
 
+func truncateQueritRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
+}
+
+func queritInt(value int) *int { return &value }
+
 func queritStringSlice(value any) ([]string, bool) {
 	switch items := value.(type) {
 	case []string:
@@ -519,10 +575,15 @@ func queritStringSlice(value any) ([]string, bool) {
 	}
 }
 
-func queritErrorJSON(err error) string {
+func queritErrorJSON(err error, apiKeys ...string) string {
 	message := "querit_search: unknown error"
 	if err != nil {
 		message = "querit_search: " + err.Error()
+	}
+	for _, apiKey := range apiKeys {
+		if apiKey = strings.TrimSpace(apiKey); apiKey != "" {
+			message = strings.ReplaceAll(message, apiKey, "[REDACTED]")
+		}
 	}
 	raw, marshalErr := json.Marshal(map[string]any{"_ERROR": message})
 	if marshalErr != nil {

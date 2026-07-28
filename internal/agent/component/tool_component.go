@@ -69,7 +69,12 @@ func (c *ToolBackedComponent) Invoke(ctx context.Context, db *gorm.DB, inputs ma
 	}
 
 	raw, invokeErr := c.tool.InvokableRun(ctx, string(argsJSON))
-	decoded := parseToolEnvelope(raw)
+	var decoded map[string]any
+	if c.spec.PreserveJSONNumbers {
+		decoded = parseToolEnvelopeLossless(raw)
+	} else {
+		decoded = parseToolEnvelope(raw)
+	}
 	if rawValue, invalid := decoded["_raw"]; invalid {
 		if invokeErr != nil {
 			return nil, fmt.Errorf("canvas: %s: %w", c.name, invokeErr)
@@ -95,6 +100,16 @@ func (c *ToolBackedComponent) Invoke(ctx context.Context, db *gorm.DB, inputs ma
 		}
 	}
 	return c.tool.BuildComponentOutputs(decoded), nil
+}
+
+func parseToolEnvelopeLossless(jsonStr string) map[string]any {
+	var out map[string]any
+	decoder := json.NewDecoder(strings.NewReader(jsonStr))
+	decoder.UseNumber()
+	if err := decoder.Decode(&out); err != nil {
+		return map[string]any{"_raw": jsonStr}
+	}
+	return out
 }
 
 func (c *ToolBackedComponent) Stream(_ context.Context, _ *gorm.DB, _ map[string]any) (<-chan map[string]any, error) {

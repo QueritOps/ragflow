@@ -84,7 +84,7 @@ func TestBuildByName_QueritAliases(t *testing.T) {
 		if !ok {
 			t.Fatalf("BuildByName(%q) returned %T, want *QueritTool", name, built)
 		}
-		if querit.defaults.Count != 8 || querit.defaults.ChunksPerDoc != 2 || len(querit.defaults.SiteInclude) != 1 {
+		if querit.defaults.Count != 8 || querit.defaults.ChunksPerDoc == nil || *querit.defaults.ChunksPerDoc != 2 || len(querit.defaults.SiteInclude) != 1 {
 			t.Fatalf("BuildByName(%q) defaults = %#v", name, querit.defaults)
 		}
 		info, infoErr := built.Info(context.Background())

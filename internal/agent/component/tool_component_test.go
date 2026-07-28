@@ -480,7 +480,7 @@ func TestToolBackedComponentQueritIntegration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		serverCalls++
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"results":{"result":[{"title":"RAGFlow","url":"https://ragflow.io","snippet":"RAG article","custom":"preserved"}]},"search_id":"search-1","query_context":{"rewritten":"rag flow"}}`))
+		_, _ = writer.Write([]byte(`{"results":{"result":[{"title":"RAGFlow","url":"https://ragflow.io","snippet":"RAG article","custom":"preserved"}]},"search_id":11099848653006015581,"query_context":{"rewritten":"rag flow"}}`))
 	}))
 	defer server.Close()
 	target, err := url.Parse(server.URL)
@@ -496,14 +496,15 @@ func TestToolBackedComponentQueritIntegration(t *testing.T) {
 	querit := agenttool.NewQueritToolWith(helper)
 	component := &ToolBackedComponent{name: "QueritSearch", tool: querit, spec: querit.ComponentSpec()}
 	state := runtime.NewCanvasState("run-querit", "task-querit")
-	empty, err := component.Invoke(context.Background(), map[string]any{"query": ""})
+	empty, err := component.Invoke(context.Background(), nil, map[string]any{"query": ""})
 	if err != nil {
 		t.Fatalf("Invoke(empty query): %v", err)
 	}
-	if serverCalls != 0 || empty["formalized_content"] != "" {
+	emptyJSON, emptyJSONOK := empty["json"].(map[string]any)
+	if serverCalls != 0 || empty["formalized_content"] != "" || !emptyJSONOK || len(emptyJSON) != 0 {
 		t.Fatalf("empty query result = %#v, server calls = %d", empty, serverCalls)
 	}
-	out, err := component.Invoke(runtime.WithState(context.Background(), state), map[string]any{"query": "ragflow", "api_key": "key"})
+	out, err := component.Invoke(runtime.WithState(context.Background(), state), nil, map[string]any{"query": "ragflow", "api_key": "key"})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
 	}
@@ -512,8 +513,13 @@ func TestToolBackedComponentQueritIntegration(t *testing.T) {
 		t.Fatalf("formalized_content = %q", rendered)
 	}
 	complete, ok := out["json"].(map[string]any)
-	if !ok || complete["search_id"] != "search-1" || complete["query_context"] == nil {
+	searchID, searchIDOK := complete["search_id"].(json.Number)
+	if !ok || !searchIDOK || searchID.String() != "11099848653006015581" || complete["query_context"] == nil {
 		t.Fatalf("complete json = %#v", out["json"])
+	}
+	encoded, err := json.Marshal(complete)
+	if err != nil || !strings.Contains(string(encoded), `"search_id":11099848653006015581`) {
+		t.Fatalf("re-encoded complete json = %s, %v", encoded, err)
 	}
 	chunks := state.GetRetrievalChunks()
 	if len(chunks) != 1 || chunks[0]["document_name"] != "RAGFlow" || chunks[0]["similarity"] != 1 {

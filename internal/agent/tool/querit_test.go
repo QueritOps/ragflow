@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -79,7 +80,7 @@ func TestQueritBuildsFiltersAndMergesRuntimeOverrides(t *testing.T) {
 	defaults := queritParams{
 		APIKey:          "stored-key",
 		Count:           20,
-		ChunksPerDoc:    2,
+		ChunksPerDoc:    queritInt(2),
 		SiteInclude:     []string{"stored.example"},
 		SiteExclude:     []string{"blocked.example"},
 		TimeRange:       "w1",
@@ -129,11 +130,12 @@ func TestQueritAPIKeyResolutionAndEmptyQuery(t *testing.T) {
 	if authorization != "Bearer environment-secret" {
 		t.Fatalf("Authorization = %q", authorization)
 	}
-	if _, err := querit.InvokableRun(context.Background(), `{"query":""}`); err != nil {
+	emptyOut, err := querit.InvokableRun(context.Background(), `{"query":""}`)
+	if err != nil {
 		t.Fatalf("empty query: %v", err)
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("empty query made a request; calls = %d", calls.Load())
+	if calls.Load() != 1 || emptyOut != `{}` {
+		t.Fatalf("empty query result = %s; calls = %d", emptyOut, calls.Load())
 	}
 
 	missing := NewQueritToolWithEnvKey(helper, func() string { return "" })
@@ -143,6 +145,44 @@ func TestQueritAPIKeyResolutionAndEmptyQuery(t *testing.T) {
 	}
 	if !strings.Contains(out, "api_key") || strings.Contains(out, "environment-secret") || calls.Load() != 1 {
 		t.Fatalf("missing-key result = %s, calls = %d", out, calls.Load())
+	}
+}
+
+func TestQueritRejectsMissingNullAndNonStringQueries(t *testing.T) {
+	var calls atomic.Int32
+	helper := NewHTTPHelper().WithClient(&http.Client{Transport: roundTripperErrorFunc(func(*http.Request) error {
+		calls.Add(1)
+		return errors.New("network must not be called")
+	})})
+	querit := NewQueritToolWith(helper)
+	for _, args := range []string{`{}`, `{"query":null}`, `{"query":123}`} {
+		t.Run(args, func(t *testing.T) {
+			out, err := querit.InvokableRun(context.Background(), args)
+			if err != nil || !strings.Contains(out, "_ERROR") || !strings.Contains(out, "query") {
+				t.Fatalf("InvokableRun(%s) = %s, %v", args, out, err)
+			}
+		})
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("invalid queries made %d network calls", calls.Load())
+	}
+}
+
+func TestQueritExplicitNullChunksPerDocIsOmitted(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_ = json.NewDecoder(request.Body).Decode(&gotBody)
+		_, _ = writer.Write([]byte(`{"results":{"result":[]}}`))
+	}))
+	defer server.Close()
+	helper := NewHTTPHelper().WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)})
+	querit := NewQueritToolWith(helper)
+	out, err := querit.InvokableRun(context.Background(), `{"query":"x","api_key":"k","chunks_per_doc":null}`)
+	if err != nil || strings.Contains(out, "_ERROR") {
+		t.Fatalf("InvokableRun = %s, %v", out, err)
+	}
+	if _, exists := gotBody["chunksPerDoc"]; exists {
+		t.Fatalf("explicit null chunks_per_doc was not omitted: %#v", gotBody)
 	}
 }
 
@@ -252,7 +292,7 @@ func TestQueritHTTPFailuresAreSoftErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("persistent server errors are soft and redact the environment key", func(t *testing.T) {
+	t.Run("persistent server errors are soft", func(t *testing.T) {
 		var calls atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			calls.Add(1)
@@ -269,10 +309,38 @@ func TestQueritHTTPFailuresAreSoftErrors(t *testing.T) {
 		if err != nil || calls.Load() != 3 || !strings.Contains(out, "_ERROR") || !strings.Contains(out, "500") {
 			t.Fatalf("result = %s, err = %v, calls = %d", out, err, calls.Load())
 		}
-		if strings.Contains(out, "environment-secret") {
-			t.Fatalf("soft error exposed environment API key: %s", out)
-		}
 	})
+
+	for _, test := range []struct {
+		name   string
+		secret string
+		node   bool
+	}{
+		{name: "node API key is redacted from transport errors", secret: "node-secret", node: true},
+		{name: "environment API key is redacted from transport errors", secret: "environment-secret"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			helper := NewHTTPHelperWithRetry(RetryConfig{
+				MaxAttempts: 1,
+				BaseBackoff: time.Nanosecond,
+				MaxBackoff:  time.Nanosecond,
+			}).WithClient(&http.Client{Transport: roundTripperErrorFunc(func(*http.Request) error {
+				return fmt.Errorf("transport rejected Bearer %s", test.secret)
+			})})
+			querit := NewQueritToolWithEnvKey(helper, func() string { return test.secret })
+			args := `{"query":"x"}`
+			if test.node {
+				args = fmt.Sprintf(`{"query":"x","api_key":%q}`, test.secret)
+			}
+			out, err := querit.InvokableRun(context.Background(), args)
+			if err != nil || !strings.Contains(out, "_ERROR") || !strings.Contains(out, "[REDACTED]") {
+				t.Fatalf("result = %s, err = %v", out, err)
+			}
+			if strings.Contains(out, test.secret) {
+				t.Fatalf("soft error exposed API key: %s", out)
+			}
+		})
+	}
 
 	t.Run("network errors are soft", func(t *testing.T) {
 		var calls atomic.Int32
@@ -303,6 +371,47 @@ func TestQueritRejectsInvalidJSONResponse(t *testing.T) {
 	}
 }
 
+func TestQueritRejectsMalformedResponseShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "top-level array", body: `[]`, want: "JSON object"},
+		{name: "results is not an object", body: `{"results":[]}`, want: "results must be a JSON object"},
+		{name: "result is not an array", body: `{"results":{"result":{}}}`, want: "results.result must be a JSON array"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				_, _ = writer.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			querit := NewQueritToolWith(NewHTTPHelper().WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)}))
+			out, err := querit.InvokableRun(context.Background(), `{"query":"x","api_key":"k"}`)
+			if err != nil || !strings.Contains(out, "_ERROR") || !strings.Contains(out, test.want) {
+				t.Fatalf("result = %s, err = %v", out, err)
+			}
+		})
+	}
+}
+
+func TestQueritAcceptsMissingOrNullResultContainers(t *testing.T) {
+	for _, body := range []string{`{}`, `{"results":null}`, `{"results":{}}`, `{"results":{"result":null}}`} {
+		t.Run(body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				_, _ = writer.Write([]byte(body))
+			}))
+			defer server.Close()
+			querit := NewQueritToolWith(NewHTTPHelper().WithClient(&http.Client{Transport: rewriteHostTransport(server.URL)}))
+			out, err := querit.InvokableRun(context.Background(), `{"query":"x","api_key":"k"}`)
+			if err != nil || strings.Contains(out, "_ERROR") {
+				t.Fatalf("result = %s, err = %v", out, err)
+			}
+		})
+	}
+}
+
 func TestQueritReferencesAndCompleteComponentOutput(t *testing.T) {
 	response := map[string]any{
 		"search_id":     "search-1",
@@ -315,7 +424,7 @@ func TestQueritReferencesAndCompleteComponentOutput(t *testing.T) {
 	}
 	querit := NewQueritTool()
 	chunks, docAggs := querit.BuildReferences(context.Background(), response)
-	if len(chunks) != 2 || len(docAggs) != 2 {
+	if len(chunks) != 1 || len(docAggs) != 1 {
 		t.Fatalf("references = %#v / %#v", chunks, docAggs)
 	}
 	if chunks[0]["content"] != "RAG engine" || chunks[0]["score"] != 1 || chunks[0]["similarity"] != 1 {
@@ -333,6 +442,27 @@ func TestQueritReferencesAndCompleteComponentOutput(t *testing.T) {
 	}
 	if chunks, docAggs := querit.BuildReferences(context.Background(), map[string]any{"results": nil}); len(chunks) != 0 || len(docAggs) != 0 {
 		t.Fatalf("malformed response references = %#v / %#v", chunks, docAggs)
+	}
+}
+
+func TestQueritReferencesSanitizeAndLimitSnippets(t *testing.T) {
+	longSnippet := strings.Repeat("界", 10001)
+	response := map[string]any{"results": map[string]any{"result": []any{
+		map[string]any{"title": "empty", "snippet": ""},
+		map[string]any{"title": "image only", "snippet": "![img](data:image/png;base64,AAAA)"},
+		map[string]any{"title": "cleaned", "snippet": "before ![img](data:image/png;base64,AAAA) after"},
+		map[string]any{"title": "limited", "snippet": longSnippet},
+	}}}
+	chunks, docAggs := NewQueritTool().BuildReferences(context.Background(), response)
+	if len(chunks) != 2 || len(docAggs) != 2 {
+		t.Fatalf("references = %#v / %#v", chunks, docAggs)
+	}
+	if chunks[0]["content"] != "before  after" {
+		t.Fatalf("base64 image was not removed: %#v", chunks[0])
+	}
+	limited, _ := chunks[1]["content"].(string)
+	if len([]rune(limited)) != 10000 {
+		t.Fatalf("limited snippet length = %d", len([]rune(limited)))
 	}
 }
 
