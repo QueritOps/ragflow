@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	"ragflow/internal/agent/runtime"
@@ -107,6 +108,9 @@ func parseToolEnvelopeLossless(jsonStr string) map[string]any {
 	decoder := json.NewDecoder(strings.NewReader(jsonStr))
 	decoder.UseNumber()
 	if err := decoder.Decode(&out); err != nil {
+		return map[string]any{"_raw": jsonStr}
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return map[string]any{"_raw": jsonStr}
 	}
 	return out
