@@ -2492,7 +2492,7 @@ Best for: Documents with flowing, contextually connected content — such as boo
       queritLanguageInclude: 'Languages to include',
       queritLanguageIncludeTip:
         'Return results in the specified language codes.',
-      queritListPlaceholder: 'Enter a value and press Enter',
+      queritListPlaceholder: 'Enter a value',
       Days: 'Days',
       comma: 'Comma',
       semicolon: 'Semicolon',
