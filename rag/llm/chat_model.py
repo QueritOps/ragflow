@@ -22,18 +22,18 @@ import re
 import time
 from abc import ABC
 from copy import deepcopy
+from enum import StrEnum
+from json.decoder import JSONDecodeError
 from urllib.parse import urljoin
 
 import json_repair
-from json.decoder import JSONDecodeError
 import litellm
 import openai
 from openai import AsyncOpenAI, OpenAI
-from enum import StrEnum
 
 from common.aimlapi_utils import attribution_headers
-from common.misc_utils import thread_pool_exec
 from common.llm_request_context import current_llm_user
+from common.misc_utils import thread_pool_exec
 from common.token_utils import num_tokens_from_string, total_token_count_from_response, usage_from_response
 from rag.llm import FACTORY_DEFAULT_BASE_URL, LITELLM_PROVIDER_PREFIX, SupportedLiteLLMProvider
 from rag.llm.key_utils import _normalize_replicate_key
@@ -63,6 +63,28 @@ class ReActMode(StrEnum):
 
 
 ERROR_PREFIX = "**ERROR**"
+
+
+def _terminal_tool_result(results, terminal_tools) -> tuple[bool, str]:
+    """Return a successful terminal tool's already-final output."""
+    if not terminal_tools:
+        return False, ""
+    for _tool_call, name, _args, result, error in results:
+        if name in terminal_tools and not error:
+            output = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+            return True, output
+    return False, ""
+
+
+def _format_reasoning_delta(reasoning, content, in_reasoning: bool, include_reasoning: bool = True) -> tuple[str, bool]:
+    """Emit one balanced reasoning/content transition for a streaming delta."""
+    if include_reasoning and reasoning:
+        prefix = "" if in_reasoning else "<think>"
+        return prefix + reasoning, True
+    prefix = "</think>" if in_reasoning else ""
+    return prefix + (content or ""), False
+
+
 LENGTH_NOTIFICATION_CN = "······\n由于大模型的上下文窗口大小限制，回答已经被大模型截断。"
 LENGTH_NOTIFICATION_EN = "...\nThe answer is truncated by your chosen LLM due to its limitation on context length."
 
@@ -289,15 +311,12 @@ class Base(ABC):
             if not resp.choices[0].delta.content:
                 resp.choices[0].delta.content = ""
             _reasoning = getattr(resp.choices[0].delta, "reasoning_content", None) or getattr(resp.choices[0].delta, "reasoning", None)
-            if kwargs.get("with_reasoning", True) and _reasoning:
-                ans = ""
-                if not reasoning_start:
-                    reasoning_start = True
-                    ans = "<think>"
-                ans += _reasoning + "</think>"
-            else:
-                reasoning_start = False
-                ans = resp.choices[0].delta.content
+            ans, reasoning_start = _format_reasoning_delta(
+                _reasoning,
+                resp.choices[0].delta.content,
+                reasoning_start,
+                kwargs.get("with_reasoning", True),
+            )
             tol = total_token_count_from_response(resp)
             if not tol:
                 tol = num_tokens_from_string(resp.choices[0].delta.content)
@@ -309,6 +328,8 @@ class Base(ABC):
                 else:
                     ans += LENGTH_NOTIFICATION_EN
             yield ans, tol
+        if reasoning_start:
+            yield "</think>", 0
 
     async def async_chat_streamly(self, system, history, gen_conf: dict | None = None, **kwargs):
         gen_conf = dict(gen_conf or {})
@@ -535,6 +556,17 @@ class Base(ABC):
 
                     logging.info(f"Response tool_calls={response.choices[0].message.tool_calls}")
                     results = await asyncio.gather(*[_exec_tool(tc) for tc in response.choices[0].message.tool_calls])
+
+                    # A terminal tool already produced the final answer. Keep
+                    # non-streaming behavior aligned with the streaming loop
+                    # and do not ask the LLM to rewrite that result.
+                    terminal, out = _terminal_tool_result(results, getattr(self, "terminal_tools", None))
+                    if terminal:
+                        logging.info("[Tool loop] A terminal tool produced the final answer - done.")
+                        if out:
+                            ans += out
+                        return ans, tk_count
+
                     history = self._append_history_batch(history, results)
                     for tc, name, args, result, err in results:
                         ans += self._verbose_tool_use(name, args, err if err else result)
@@ -631,16 +663,12 @@ class Base(ABC):
 
                         _reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
                         if _reasoning:
-                            ans = ""
-                            if not reasoning_start:
-                                reasoning_start = True
-                                ans = "<think>"
-                            ans += _reasoning + "</think>"
+                            ans, reasoning_start = _format_reasoning_delta(_reasoning, "", reasoning_start)
                             yield ans
                         else:
-                            reasoning_start = False
                             answer += delta.content
-                            yield delta.content
+                            ans, reasoning_start = _format_reasoning_delta(None, delta.content, reasoning_start)
+                            yield ans
 
                         if not _u["total_tokens"]:
                             round_estimate += num_tokens_from_string(delta.content)
@@ -648,6 +676,9 @@ class Base(ABC):
                         finish_reason = getattr(resp.choices[0], "finish_reason", "")
                         if finish_reason == "length":
                             yield self._length_stop("")
+
+                    if reasoning_start:
+                        yield "</think>"
 
                     # Commit this round's tokens (each round is a separate provider
                     # request — accumulate, never overwrite).
@@ -1778,15 +1809,12 @@ class LiteLLMBase(ABC):
                         delta.content = ""
 
                     _reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
-                    if kwargs.get("with_reasoning", True) and _reasoning:
-                        ans = ""
-                        if not reasoning_start:
-                            reasoning_start = True
-                            ans = "<think>"
-                        ans += _reasoning + "</think>"
-                    else:
-                        reasoning_start = False
-                        ans = delta.content
+                    ans, reasoning_start = _format_reasoning_delta(
+                        _reasoning,
+                        delta.content,
+                        reasoning_start,
+                        kwargs.get("with_reasoning", True),
+                    )
 
                     if not _usage["total_tokens"]:
                         # No authoritative usage yet: keep a running estimate as fallback.
@@ -1800,6 +1828,8 @@ class LiteLLMBase(ABC):
                             ans += LENGTH_NOTIFICATION_EN
 
                     yield ans
+                if reasoning_start:
+                    yield "</think>"
                 yield total_tokens
                 return
             except Exception as e:
@@ -2009,6 +2039,17 @@ class LiteLLMBase(ABC):
 
                     logging.info(f"Response tool_calls={message.tool_calls}")
                     results = await asyncio.gather(*[_exec_tool(tc) for tc in message.tool_calls])
+
+                    # A terminal tool already produced the final answer. Keep
+                    # non-streaming behavior aligned with the streaming loop
+                    # and do not ask the LLM to rewrite that result.
+                    terminal, out = _terminal_tool_result(results, getattr(self, "terminal_tools", None))
+                    if terminal:
+                        logging.info("[Tool loop] A terminal tool produced the final answer - done.")
+                        if out:
+                            ans += out
+                        return ans, tk_count
+
                     history = self._append_history_batch(
                         history,
                         results,
@@ -2114,16 +2155,12 @@ class LiteLLMBase(ABC):
                         if _reasoning:
                             if self._need_reasoning_content_back():
                                 reasoning_content += _reasoning
-                            ans = ""
-                            if not reasoning_start:
-                                reasoning_start = True
-                                ans = "<think>"
-                            ans += _reasoning + "</think>"
+                            ans, reasoning_start = _format_reasoning_delta(_reasoning, "", reasoning_start)
                             yield ans
                         else:
-                            reasoning_start = False
                             answer += delta.content
-                            yield delta.content
+                            ans, reasoning_start = _format_reasoning_delta(None, delta.content, reasoning_start)
+                            yield ans
 
                         if not _u["total_tokens"]:
                             round_estimate += num_tokens_from_string(delta.content)
@@ -2131,6 +2168,9 @@ class LiteLLMBase(ABC):
                         finish_reason = getattr(resp.choices[0], "finish_reason", "")
                         if finish_reason == "length":
                             yield self._length_stop("")
+
+                    if reasoning_start:
+                        yield "</think>"
 
                     # Commit this round's tokens to the running aggregate.
                     _commit_round(round_usage, round_estimate)

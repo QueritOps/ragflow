@@ -39,6 +39,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from rag.prompts.generator import form_message, kb_prompt, message_fit_in
+from rag.utils.web_search_error import WEB_SEARCH_FAILURE_MESSAGE, WebSearchProviderError
 
 _LOG = logging.getLogger(__name__)
 
@@ -320,6 +321,9 @@ async def run_agentic_rag(tools, messages: list, max_loops: int = 3, gen_conf: d
                 {"messages": messages},
                 {"recursion_limit": max(25, max_loops * 8)},
             )
+        except WebSearchProviderError:
+            _LOG.warning("run_agentic_rag: web search provider request failed")
+            holder["web_search_error"] = True
         except Exception:
             logging.exception("run_agentic_rag: graph execution failed")
             holder["error"] = True
@@ -345,5 +349,7 @@ async def run_agentic_rag(tools, messages: list, max_loops: int = 3, gen_conf: d
 
     _LOG.info("[Agentic RAG] Research complete — %d passage(s) gathered after %d round(s).", len((state.get("kbinfos") or {}).get("chunks", [])), state.get("loop", 0))
 
-    if not produced and holder.get("error"):
+    if not produced and holder.get("web_search_error"):
+        yield WEB_SEARCH_FAILURE_MESSAGE
+    elif not produced and holder.get("error"):
         yield "I couldn't complete the search due to an internal error."

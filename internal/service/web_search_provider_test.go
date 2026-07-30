@@ -229,6 +229,12 @@ func TestRetrieveQueritWebSearchReturnsSafeErrorOnHTTPFailure(t *testing.T) {
 	}
 }
 
+func TestTokenizeTextNormalizesWhitespaceWithoutChangingWords(t *testing.T) {
+	if got := tokenizeText("  Alpha\tBETA\nGamma  "); got != "alpha beta gamma" {
+		t.Fatalf("tokenizeText() = %q, want %q", got, "alpha beta gamma")
+	}
+}
+
 func TestDecodeQueritWebSearchResultsRejectsMalformedContainers(t *testing.T) {
 	cases := []struct {
 		name string

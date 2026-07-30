@@ -1,9 +1,11 @@
 """Search tools: hybrid, vector, BM25, web, structured."""
 
+import hashlib
 import logging
 import re
-import hashlib
+
 from common import settings
+from rag.utils.web_search_error import WebSearchProviderError
 
 _LOG = logging.getLogger(__name__)
 
@@ -288,6 +290,9 @@ async def web_search(tools, query: str, keywords: str = "") -> dict:
         effective_query = f"{query} {keywords}".strip() if keywords else query
         web_res = await thread_pool_exec(tools.web_search.retrieve_chunks, effective_query)
         return {"chunks": web_res.get("chunks", []), "doc_aggs": web_res.get("doc_aggs", [])}
+    except WebSearchProviderError:
+        _LOG.warning("web_search provider request failed")
+        raise
     except Exception:
         _LOG.exception("web_search failed")
         return {"chunks": [], "doc_aggs": []}

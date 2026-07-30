@@ -1866,11 +1866,9 @@ func (s *ChatPipelineService) tavilyRetrieve(ctx context.Context, apiKey, questi
 // tokenizeText is a lightweight tokenizer for Tavily content.
 // It lowercases and splits on whitespace, similar to rag_tokenizer.tokenize.
 func tokenizeText(text string) string {
-	// Collapse multiple whitespaces and split.
-	ws := regexp.MustCompile(`\s+`)
-	text = ws.ReplaceAllString(text, " ")
-	// Convert to lowercase for tokenization.
-	return strings.ToLower(text)
+	// strings.Fields avoids recompiling and running a regexp over potentially
+	// large web snippets while preserving the same whitespace normalization.
+	return strings.ToLower(strings.Join(strings.Fields(text), " "))
 }
 
 // getLLMModelConfig resolves the LLM model configuration for the chat.

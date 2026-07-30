@@ -50,6 +50,7 @@ from rag.nlp.search import index_name
 from rag.prompts.generator import chunks_format, citation_prompt, cross_languages, full_question, kb_prompt, keyword_extraction, message_fit_in, PROMPT_JINJA_ENV, ASK_SUMMARY
 from common.token_utils import num_tokens_from_string
 from rag.utils.web_search_conn import create_web_search_provider, has_web_search_provider
+from rag.utils.web_search_error import WEB_SEARCH_FAILURE_MESSAGE, WebSearchProviderError
 from rag.utils.tts_cache import synthesize_with_cache
 from common.string_utils import remove_redundant_spaces
 from common import settings
@@ -782,7 +783,18 @@ async def async_chat(dialog, messages, stream=True, **kwargs):
                 kbinfos["chunks"] = retriever.retrieval_by_children(kbinfos["chunks"], tenant_ids)
             if use_web_search:
                 web_search = create_web_search_provider(prompt_config)
-                web_res = web_search.retrieve_chunks(" ".join(questions))
+                try:
+                    web_res = web_search.retrieve_chunks(" ".join(questions))
+                except WebSearchProviderError:
+                    logging.warning("async_chat: web search provider request failed")
+                    yield {
+                        "answer": WEB_SEARCH_FAILURE_MESSAGE,
+                        "reference": {},
+                        "prompt": "",
+                        "audio_binary": None,
+                        "final": True,
+                    }
+                    return
                 kbinfos["chunks"].extend(web_res["chunks"])
                 kbinfos["doc_aggs"].extend(web_res["doc_aggs"])
             if prompt_config.get("use_kg"):

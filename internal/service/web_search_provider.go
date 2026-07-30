@@ -25,12 +25,16 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"ragflow/internal/common"
+
+	"go.uber.org/zap"
 )
 
 const (
 	webSearchProviderTavily = "tavily"
-	webSearchProviderQuerit  = "querit"
-	queritWebSearchEndpoint  = "https://api.querit.ai/v1/search"
+	webSearchProviderQuerit = "querit"
+	queritWebSearchEndpoint = "https://api.querit.ai/v1/search"
 )
 
 var queritWebSearchHTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -136,6 +140,9 @@ func retrieveQueritWebSearch(
 	apiKey string,
 	query string,
 ) (map[string]interface{}, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	requestBody, err := json.Marshal(map[string]interface{}{
 		"query":        query,
 		"count":        6,
@@ -145,7 +152,7 @@ func retrieveQueritWebSearch(
 		return nil, fmt.Errorf("querit: marshal request: %w", err)
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(requestBody))
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("querit: new request: %w", err)
 	}
@@ -153,11 +160,13 @@ func retrieveQueritWebSearch(
 	request.Header.Set("Authorization", "Bearer "+apiKey)
 	request.Header.Set("Content-Type", "application/json")
 
+	common.Info("[Querit] web search request started")
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("querit: do request: %w", err)
 	}
 	defer response.Body.Close()
+	common.Info("[Querit] web search response received", zap.Int("status", response.StatusCode))
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("querit: status %d", response.StatusCode)
@@ -171,6 +180,7 @@ func retrieveQueritWebSearch(
 	if err != nil {
 		return nil, err
 	}
+	common.Info("[Querit] web search response decoded", zap.Int("results", len(results)))
 
 	chunks := make([]map[string]interface{}, 0, len(results))
 	docAggs := make([]interface{}, 0, len(results))
@@ -202,6 +212,7 @@ func retrieveQueritWebSearch(
 			"url":      result.URL,
 		})
 	}
+	common.Info("[Querit] web search chunks built", zap.Int("chunks", len(chunks)))
 
 	return map[string]interface{}{
 		"chunks":   chunks,
