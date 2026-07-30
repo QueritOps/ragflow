@@ -135,8 +135,7 @@ export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
       prompt_config: {
         ...data.prompt_config,
         web_search_provider:
-          data.prompt_config?.web_search_provider ??
-          WebSearchProvider.Tavily,
+          data.prompt_config?.web_search_provider ?? WebSearchProvider.Tavily,
         reference_metadata: normalizedReferenceMetadata,
       },
       ...llmSettingEnabledValues,

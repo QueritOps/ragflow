@@ -1,6 +1,6 @@
 import { WebSearchProvider } from '@/constants/chat';
 import type { PromptConfig } from '@/interfaces/database/chat';
-import { getWebSearchApiKey } from './use-show-internet';
+import { getWebSearchApiKey } from './web-search-api-key';
 
 describe('getWebSearchApiKey', () => {
   it('uses Tavily for dialogs saved before provider selection existed', () => {
@@ -37,5 +37,23 @@ describe('getWebSearchApiKey', () => {
     } as PromptConfig;
 
     expect(getWebSearchApiKey(promptConfig)).toBe('');
+  });
+
+  it('does not fall back to Tavily for an unsupported provider', () => {
+    const promptConfig = {
+      web_search_provider: 'unsupported',
+      tavily_api_key: 'tvly-test',
+    } as unknown as PromptConfig;
+
+    expect(getWebSearchApiKey(promptConfig)).toBeUndefined();
+  });
+
+  it('treats a non-string key as unconfigured', () => {
+    const promptConfig = {
+      web_search_provider: WebSearchProvider.Querit,
+      querit_api_key: 123,
+    } as unknown as PromptConfig;
+
+    expect(getWebSearchApiKey(promptConfig)).toBeUndefined();
   });
 });
