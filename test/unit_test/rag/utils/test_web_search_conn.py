@@ -17,7 +17,7 @@
 from rag.utils import web_search_conn
 
 
-def test_create_web_search_provider_uses_existing_tavily_config(monkeypatch):
+def test_create_web_search_provider_uses_existing_tavily_config_without_provider_field(monkeypatch):
     created_with = []
     provider = object()
 
@@ -29,11 +29,48 @@ def test_create_web_search_provider_uses_existing_tavily_config(monkeypatch):
     assert created_with == ["tvly-test"]
 
 
-def test_create_web_search_provider_returns_none_without_tavily_key():
+def test_create_web_search_provider_uses_selected_querit_config(monkeypatch):
+    created_with = []
+    provider = object()
+
+    monkeypatch.setattr(web_search_conn, "Querit", lambda api_key: created_with.append(api_key) or provider)
+
+    result = web_search_conn.create_web_search_provider(
+        {
+            "web_search_provider": "querit",
+            "querit_api_key": "querit-test",
+            "tavily_api_key": "tvly-test",
+        }
+    )
+
+    assert result is provider
+    assert created_with == ["querit-test"]
+
+
+def test_create_web_search_provider_requires_key_for_selected_provider():
     assert web_search_conn.create_web_search_provider({}) is None
     assert web_search_conn.create_web_search_provider(None) is None
+    assert web_search_conn.create_web_search_provider({"web_search_provider": "tavily"}) is None
+    assert web_search_conn.create_web_search_provider({"web_search_provider": "querit"}) is None
 
 
-def test_has_web_search_provider_preserves_tavily_truthiness():
+def test_has_web_search_provider_follows_selected_provider():
     assert web_search_conn.has_web_search_provider({"tavily_api_key": "tvly-test"})
     assert not web_search_conn.has_web_search_provider({"tavily_api_key": ""})
+    assert web_search_conn.has_web_search_provider(
+        {"web_search_provider": "querit", "querit_api_key": "querit-test"}
+    )
+    assert not web_search_conn.has_web_search_provider(
+        {
+            "web_search_provider": "querit",
+            "querit_api_key": "",
+            "tavily_api_key": "tvly-test",
+        }
+    )
+    assert not web_search_conn.has_web_search_provider(
+        {
+            "web_search_provider": "unsupported",
+            "querit_api_key": "querit-test",
+            "tavily_api_key": "tvly-test",
+        }
+    )
