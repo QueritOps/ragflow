@@ -70,10 +70,7 @@ const providerKeyConfig = {
 export function WebSearchFormField({ prefix = '' }: IProps) {
   const form = useFormContext();
   const { t } = useTranslate('chat');
-  const providerName = prefixName(
-    prefix,
-    'prompt_config.web_search_provider',
-  );
+  const providerName = prefixName(prefix, 'prompt_config.web_search_provider');
   const selectedProvider =
     useWatch({
       control: form.control,
@@ -122,11 +119,7 @@ export function WebSearchFormField({ prefix = '' }: IProps) {
               />
             </FormControl>
             <FormDescription>
-              <a
-                href={keyConfig.helpUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
+              <a href={keyConfig.helpUrl} target="_blank" rel="noreferrer">
                 {t('tavilyApiKeyHelp')}
               </a>
             </FormDescription>

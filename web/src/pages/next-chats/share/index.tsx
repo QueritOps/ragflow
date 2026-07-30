@@ -116,8 +116,7 @@ const ChatContainer = () => {
                 stopOutputMessage={stopOutputMessage}
                 showReasoning
                 showInternet={
-                  chatInfo?.has_web_search_provider ??
-                  chatInfo?.has_tavily_key
+                  chatInfo?.has_web_search_provider ?? chatInfo?.has_tavily_key
                 }
               ></NextMessageInput>
             </div>
