@@ -75,12 +75,11 @@ class RAGTools:
         embed_mdl: LLMBundle | None = None,
         kb_ids: List[str] | None = None,
         kbs: list[Knowledgebase] | None = None,
-        tav: WebSearchProvider | None = None,
+        web_search: WebSearchProvider | None = None,
         meta_data_filter: dict | None = None,
         user_defined_prompts: dict | None = None,
         do_refer: bool | None = True,
         thinking_mode: str = "medium",
-        web_search: WebSearchProvider | None = None,
     ):
         self.tenant_ids = tenant_ids
         self.chat_mdl = chat_mdl.clone()
@@ -106,8 +105,7 @@ class RAGTools:
             for kb in kbs:
                 _exclude_sql_kb(kb)
 
-        self.web_search = web_search if web_search is not None else tav
-        self.tav = self.web_search
+        self.web_search = web_search
         self.meta_data_filter = meta_data_filter
         self.user_defined_prompts = user_defined_prompts or {}
         self.kbinfos = {"chunks": [], "doc_aggs": []}
