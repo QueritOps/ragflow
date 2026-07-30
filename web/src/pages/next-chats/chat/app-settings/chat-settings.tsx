@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Form } from '@/components/ui/form';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { DatasetMetadata } from '@/constants/chat';
+import { DatasetMetadata, WebSearchProvider } from '@/constants/chat';
 import { useSetModalState } from '@/hooks/common-hooks';
 import { useFetchChat, useUpdateChat } from '@/hooks/use-chat-request';
 import { useFindLlmByUuid } from '@/hooks/use-llm-request';
@@ -57,6 +57,7 @@ export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
         reasoning: false,
         cross_languages: [],
         toc_enhance: false,
+        web_search_provider: WebSearchProvider.Tavily,
         reference_metadata: {
           include: false,
           fields: undefined,
@@ -133,6 +134,9 @@ export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
       ...data,
       prompt_config: {
         ...data.prompt_config,
+        web_search_provider:
+          data.prompt_config?.web_search_provider ??
+          WebSearchProvider.Tavily,
         reference_metadata: normalizedReferenceMetadata,
       },
       ...llmSettingEnabledValues,
