@@ -55,7 +55,7 @@ from rag.prompts.generator import (
     sufficiency_select,
 )
 from api.db.db_models import Document, Knowledgebase
-from rag.utils.tavily_conn import Tavily
+from rag.utils.web_search_conn import WebSearchProvider
 
 
 # Tokens held back from the model's context when fitting retrieved evidence
@@ -75,11 +75,12 @@ class RAGTools:
         embed_mdl: LLMBundle | None = None,
         kb_ids: List[str] | None = None,
         kbs: list[Knowledgebase] | None = None,
-        tav: Tavily | None = None,
+        tav: WebSearchProvider | None = None,
         meta_data_filter: dict | None = None,
         user_defined_prompts: dict | None = None,
         do_refer: bool | None = True,
         thinking_mode: str = "medium",
+        web_search: WebSearchProvider | None = None,
     ):
         self.tenant_ids = tenant_ids
         self.chat_mdl = chat_mdl.clone()
@@ -105,7 +106,8 @@ class RAGTools:
             for kb in kbs:
                 _exclude_sql_kb(kb)
 
-        self.tav = tav
+        self.web_search = web_search if web_search is not None else tav
+        self.tav = self.web_search
         self.meta_data_filter = meta_data_filter
         self.user_defined_prompts = user_defined_prompts or {}
         self.kbinfos = {"chunks": [], "doc_aggs": []}
@@ -135,7 +137,7 @@ class RAGTools:
         return bool(self.sql_kbs and self.field_map)
 
     def has_web(self) -> bool:
-        return self.tav is not None
+        return self.web_search is not None
 
     def has_llm(self) -> bool:
         return self.chat_mdl is not None
@@ -408,15 +410,15 @@ class RAGTools:
         return {"chunks": kbinfos.get("chunks", []), "doc_aggs": kbinfos.get("doc_aggs", [])}
 
     async def web_retrieve(self, query: str) -> dict[str, list]:
-        """Retrieve chunks from the public web (Tavily). Raw kbinfos shape."""
-        if self.tav is None:
+        """Retrieve chunks from the public web. Raw kbinfos shape."""
+        if self.web_search is None:
             return {"chunks": [], "doc_aggs": []}
         try:
-            tav_res = await thread_pool_exec(self.tav.retrieve_chunks, query)
+            web_res = await thread_pool_exec(self.web_search.retrieve_chunks, query)
         except Exception:
             logging.exception("web_retrieve failed")
             return {"chunks": [], "doc_aggs": []}
-        return {"chunks": tav_res.get("chunks", []), "doc_aggs": tav_res.get("doc_aggs", [])}
+        return {"chunks": web_res.get("chunks", []), "doc_aggs": web_res.get("doc_aggs", [])}
 
     async def structured_retrieve(self, question: str) -> dict[str, Any]:
         """Query the structured (tabular) KBs by translating to SQL.
