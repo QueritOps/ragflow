@@ -92,6 +92,13 @@ type AsyncChatResult struct {
 	accumulatedAnswer string
 }
 
+func webSearchFailureResult() AsyncChatResult {
+	return AsyncChatResult{
+		Answer: "**ERROR**: Web search failed. Check the selected provider API Key and try again.",
+		Final:  true,
+	}
+}
+
 // AsyncChat is the Go equivalent of Python's async_chat() in
 // api/db/services/dialog_service.py:541.
 //
@@ -778,6 +785,8 @@ func (s *ChatPipelineService) AsyncChat(
 					webResult, webErr := s.retrieveWebSearch(ctx, provider, searchQuestion)
 					if webErr != nil {
 						common.Warn("Web search failed", zap.Error(webErr))
+						out <- webSearchFailureResult()
+						return
 					} else {
 						// Extend chunks and doc_aggs with web search results.
 						if existingChunks, ok := kbinfos["chunks"].([]map[string]interface{}); ok {
