@@ -65,6 +65,7 @@ func resolveWebSearchProvider(promptConfig map[string]interface{}) *webSearchPro
 	}
 
 	apiKey, _ := promptConfig[apiKeyField].(string)
+	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return nil
 	}

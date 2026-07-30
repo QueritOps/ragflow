@@ -48,6 +48,7 @@ func TestResolveWebSearchProviderReturnsNilWithoutTavilyKey(t *testing.T) {
 		{name: "nil config", config: nil},
 		{name: "empty config", config: map[string]interface{}{}},
 		{name: "empty key", config: map[string]interface{}{"tavily_api_key": ""}},
+		{name: "whitespace key", config: map[string]interface{}{"tavily_api_key": "   "}},
 		{name: "non-string key", config: map[string]interface{}{"tavily_api_key": 1}},
 	}
 
@@ -78,6 +79,20 @@ func TestResolveWebSearchProviderUsesSelectedQueritConfig(t *testing.T) {
 	}
 }
 
+func TestResolveWebSearchProviderTrimsSelectedKey(t *testing.T) {
+	provider := resolveWebSearchProvider(map[string]interface{}{
+		"web_search_provider": "querit",
+		"querit_api_key":      "  querit-test  ",
+	})
+
+	if provider == nil {
+		t.Fatal("provider is nil")
+	}
+	if provider.APIKey != "querit-test" {
+		t.Fatalf("api key = %q, want %q", provider.APIKey, "querit-test")
+	}
+}
+
 func TestResolveWebSearchProviderRequiresKeyForSelectedProvider(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -85,6 +100,13 @@ func TestResolveWebSearchProviderRequiresKeyForSelectedProvider(t *testing.T) {
 	}{
 		{name: "tavily", config: map[string]interface{}{"web_search_provider": "tavily"}},
 		{name: "querit", config: map[string]interface{}{"web_search_provider": "querit"}},
+		{
+			name: "querit whitespace key",
+			config: map[string]interface{}{
+				"web_search_provider": "querit",
+				"querit_api_key":      "   ",
+			},
+		},
 		{
 			name: "querit does not fall back to tavily",
 			config: map[string]interface{}{

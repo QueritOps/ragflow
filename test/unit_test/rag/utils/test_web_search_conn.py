@@ -47,11 +47,38 @@ def test_create_web_search_provider_uses_selected_querit_config(monkeypatch):
     assert created_with == ["querit-test"]
 
 
+def test_create_web_search_provider_trims_selected_key(monkeypatch):
+    created_with = []
+    provider = object()
+
+    monkeypatch.setattr(web_search_conn, "Querit", lambda api_key: created_with.append(api_key) or provider)
+
+    result = web_search_conn.create_web_search_provider(
+        {
+            "web_search_provider": "querit",
+            "querit_api_key": "  querit-test  ",
+        }
+    )
+
+    assert result is provider
+    assert created_with == ["querit-test"]
+
+
 def test_create_web_search_provider_requires_key_for_selected_provider():
     assert web_search_conn.create_web_search_provider({}) is None
     assert web_search_conn.create_web_search_provider(None) is None
     assert web_search_conn.create_web_search_provider({"web_search_provider": "tavily"}) is None
     assert web_search_conn.create_web_search_provider({"web_search_provider": "querit"}) is None
+    assert web_search_conn.create_web_search_provider({"tavily_api_key": "   "}) is None
+    assert (
+        web_search_conn.create_web_search_provider(
+            {
+                "web_search_provider": "querit",
+                "querit_api_key": "   ",
+            }
+        )
+        is None
+    )
 
 
 def test_has_web_search_provider_follows_selected_provider():

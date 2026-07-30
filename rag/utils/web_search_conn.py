@@ -28,20 +28,25 @@ class WebSearchProvider(Protocol):
         """Return web results in RAGFlow's chunk and document aggregate shape."""
 
 
+def _get_api_key(prompt_config: dict, field: str) -> str:
+    api_key = prompt_config.get(field)
+    return api_key.strip() if isinstance(api_key, str) else ""
+
+
 def has_web_search_provider(prompt_config: dict | None) -> bool:
     if not prompt_config:
         return False
     provider = prompt_config.get("web_search_provider", WEB_SEARCH_PROVIDER_TAVILY)
     if provider == WEB_SEARCH_PROVIDER_TAVILY:
-        return bool(prompt_config.get("tavily_api_key"))
+        return bool(_get_api_key(prompt_config, "tavily_api_key"))
     if provider == WEB_SEARCH_PROVIDER_QUERIT:
-        return bool(prompt_config.get("querit_api_key"))
+        return bool(_get_api_key(prompt_config, "querit_api_key"))
     return False
 
 
 def create_web_search_provider(prompt_config: dict | None) -> WebSearchProvider | None:
-    if not has_web_search_provider(prompt_config):
+    if not prompt_config or not has_web_search_provider(prompt_config):
         return None
     if prompt_config.get("web_search_provider", WEB_SEARCH_PROVIDER_TAVILY) == WEB_SEARCH_PROVIDER_QUERIT:
-        return Querit(prompt_config["querit_api_key"])
-    return Tavily(prompt_config["tavily_api_key"])
+        return Querit(_get_api_key(prompt_config, "querit_api_key"))
+    return Tavily(_get_api_key(prompt_config, "tavily_api_key"))
