@@ -23,6 +23,8 @@ from common.http_client import DEFAULT_TIMEOUT
 from common.misc_utils import get_uuid
 from rag.nlp import rag_tokenizer
 
+logger = logging.getLogger(__name__)
+
 QUERIT_SEARCH_URL = "https://api.querit.ai/v1/search"
 
 
@@ -75,13 +77,13 @@ class Querit:
                 )
             return normalized_results
         except (requests.RequestException, TypeError, ValueError) as error:
-            logging.error("Querit search failed: %s", _safe_error_message(error, self.api_key))
+            logger.error("Querit search failed: %s", _safe_error_message(error, self.api_key))
             return []
 
     def retrieve_chunks(self, question: str) -> dict[str, list]:
         chunks = []
         doc_aggs = []
-        logging.info("[Querit]Q: %s", question)
+        logger.info("[Querit]Q: %s", question)
         for result in self.search(question):
             chunk_id = get_uuid()
             chunks.append(
@@ -110,7 +112,7 @@ class Querit:
                     "url": result["url"],
                 }
             )
-            logging.info("[Querit]R: %s...", result["content"][:128])
+            logger.info("[Querit]R: %s...", result["content"][:128])
         return {"chunks": chunks, "doc_aggs": doc_aggs}
 
 
