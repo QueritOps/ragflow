@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -196,6 +197,41 @@ func TestRetrieveQueritWebSearchUsesChatDefaultsAndReturnsReferenceShape(t *test
 	aggs, ok := result["doc_aggs"].([]interface{})
 	if !ok || len(aggs) != 1 {
 		t.Fatalf("doc_aggs = %#v, want one aggregate", result["doc_aggs"])
+	}
+}
+
+func TestRetrieveQueritWebSearchReturnsSafeErrorOnHTTPFailure(t *testing.T) {
+	const apiKey = "querit-secret-test-key"
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		http.Error(response, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	result, err := retrieveQueritWebSearch(
+		context.Background(),
+		server.Client(),
+		server.URL,
+		apiKey,
+		"What is RAGFlow?",
+	)
+
+	if err == nil {
+		t.Fatal("error is nil")
+	}
+	if result != nil {
+		t.Fatalf("result = %#v, want nil", result)
+	}
+	if !strings.Contains(err.Error(), "status 401") {
+		t.Fatalf("error = %q, want status 401", err.Error())
+	}
+	if strings.Contains(err.Error(), apiKey) {
+		t.Fatalf("error contains API key: %q", err.Error())
+	}
+}
+
+func TestTokenizeTextNormalizesWhitespaceWithoutChangingWords(t *testing.T) {
+	if got := tokenizeText("  Alpha\tBETA\nGamma  "); got != "alpha beta gamma" {
+		t.Fatalf("tokenizeText() = %q, want %q", got, "alpha beta gamma")
 	}
 }
 

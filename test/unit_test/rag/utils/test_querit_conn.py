@@ -14,7 +14,10 @@
 #  limitations under the License.
 #
 
+import pytest
+
 from rag.utils import querit_conn
+from rag.utils.web_search_error import WebSearchProviderError
 
 
 class _Response:
@@ -118,6 +121,7 @@ def test_querit_search_redacts_api_key_from_failures(monkeypatch, caplog):
 
     monkeypatch.setattr(querit_conn.requests, "post", lambda *_args, **_kwargs: _FailedResponse())
 
-    assert querit_conn.Querit("querit-secret").search("RAGFlow") == []
+    with pytest.raises(WebSearchProviderError, match="Querit search failed"):
+        querit_conn.Querit("querit-secret").search("RAGFlow")
     assert "querit-secret" not in caplog.text
     assert "[REDACTED]" in caplog.text

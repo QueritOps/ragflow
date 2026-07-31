@@ -35,6 +35,8 @@ import re
 from typing import Any, List
 
 import json_repair
+
+from api.db.db_models import Document, Knowledgebase
 from api.db.services.doc_metadata_service import DocMetadataService
 from api.db.services.document_service import DocumentService
 from api.db.services.knowledgebase_service import KnowledgebaseService
@@ -54,9 +56,8 @@ from rag.prompts.generator import (
     multi_queries_gen,
     sufficiency_select,
 )
-from api.db.db_models import Document, Knowledgebase
 from rag.utils.web_search_conn import WebSearchProvider
-
+from rag.utils.web_search_error import WebSearchProviderError
 
 # Tokens held back from the model's context when fitting retrieved evidence
 # into the sufficiency / follow-up prompts. The evidence sits in the MIDDLE of
@@ -413,6 +414,9 @@ class RAGTools:
             return {"chunks": [], "doc_aggs": []}
         try:
             web_res = await thread_pool_exec(self.web_search.retrieve_chunks, query)
+        except WebSearchProviderError:
+            logging.warning("web_retrieve provider request failed")
+            raise
         except Exception:
             logging.exception("web_retrieve failed")
             return {"chunks": [], "doc_aggs": []}

@@ -92,6 +92,13 @@ type AsyncChatResult struct {
 	accumulatedAnswer string
 }
 
+func webSearchFailureResult() AsyncChatResult {
+	return AsyncChatResult{
+		Answer: "**ERROR**: Web search failed. Check the selected provider API Key and try again.",
+		Final:  true,
+	}
+}
+
 // AsyncChat is the Go equivalent of Python's async_chat() in
 // api/db/services/dialog_service.py:541.
 //
@@ -778,6 +785,8 @@ func (s *ChatPipelineService) AsyncChat(
 					webResult, webErr := s.retrieveWebSearch(ctx, provider, searchQuestion)
 					if webErr != nil {
 						common.Warn("Web search failed", zap.Error(webErr))
+						out <- webSearchFailureResult()
+						return
 					} else {
 						// Extend chunks and doc_aggs with web search results.
 						if existingChunks, ok := kbinfos["chunks"].([]map[string]interface{}); ok {
@@ -1857,11 +1866,9 @@ func (s *ChatPipelineService) tavilyRetrieve(ctx context.Context, apiKey, questi
 // tokenizeText is a lightweight tokenizer for Tavily content.
 // It lowercases and splits on whitespace, similar to rag_tokenizer.tokenize.
 func tokenizeText(text string) string {
-	// Collapse multiple whitespaces and split.
-	ws := regexp.MustCompile(`\s+`)
-	text = ws.ReplaceAllString(text, " ")
-	// Convert to lowercase for tokenization.
-	return strings.ToLower(text)
+	// strings.Fields avoids recompiling and running a regexp over potentially
+	// large web snippets while preserving the same whitespace normalization.
+	return strings.ToLower(strings.Join(strings.Fields(text), " "))
 }
 
 // getLLMModelConfig resolves the LLM model configuration for the chat.

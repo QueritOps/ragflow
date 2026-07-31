@@ -491,6 +491,20 @@ func TestAsyncChatResult_FinalFlagDefaultsFalse(t *testing.T) {
 	}
 }
 
+func TestWebSearchFailureResultStopsWithoutProviderDetails(t *testing.T) {
+	result := webSearchFailureResult()
+
+	if !result.Final {
+		t.Fatal("web search failure result must be final")
+	}
+	if result.Answer != "**ERROR**: Web search failed. Check the selected provider API Key and try again." {
+		t.Fatalf("answer = %q", result.Answer)
+	}
+	if strings.Contains(strings.ToLower(result.Answer), "querit") || strings.Contains(strings.ToLower(result.Answer), "tavily") {
+		t.Fatalf("answer exposes provider details: %q", result.Answer)
+	}
+}
+
 // --- P5 SQL retrieval normalization ---
 
 // TestNormalizeSQL_StripsThinkBlocks covers the cleanup that runs on

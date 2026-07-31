@@ -22,6 +22,7 @@ import requests
 from common.http_client import DEFAULT_TIMEOUT
 from common.misc_utils import get_uuid
 from rag.nlp import rag_tokenizer
+from rag.utils.web_search_error import WebSearchProviderError
 
 QUERIT_SEARCH_URL = "https://api.querit.ai/v1/search"
 
@@ -76,7 +77,7 @@ class Querit:
             return normalized_results
         except (requests.RequestException, TypeError, ValueError) as error:
             logging.error("Querit search failed: %s", _safe_error_message(error, self.api_key))
-            return []
+            raise WebSearchProviderError("Querit search failed.") from error
 
     def retrieve_chunks(self, question: str) -> dict[str, list]:
         chunks = []
