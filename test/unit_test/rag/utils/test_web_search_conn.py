@@ -84,9 +84,7 @@ def test_create_web_search_provider_requires_key_for_selected_provider():
 def test_has_web_search_provider_follows_selected_provider():
     assert web_search_conn.has_web_search_provider({"tavily_api_key": "tvly-test"})
     assert not web_search_conn.has_web_search_provider({"tavily_api_key": ""})
-    assert web_search_conn.has_web_search_provider(
-        {"web_search_provider": "querit", "querit_api_key": "querit-test"}
-    )
+    assert web_search_conn.has_web_search_provider({"web_search_provider": "querit", "querit_api_key": "querit-test"})
     assert not web_search_conn.has_web_search_provider(
         {
             "web_search_provider": "querit",
