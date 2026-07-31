@@ -1,6 +1,20 @@
 import { WebSearchProvider } from '@/constants/chat';
 import type { PromptConfig } from '@/interfaces/database/chat';
-import { getWebSearchApiKey } from './web-search-api-key';
+import { getWebSearchApiKey, getWebSearchProvider } from './web-search-api-key';
+
+describe('getWebSearchProvider', () => {
+  it('does not select a provider for a new unconfigured dialog', () => {
+    expect(getWebSearchProvider({} as PromptConfig)).toBeUndefined();
+  });
+
+  it('selects Tavily for a legacy dialog with a Tavily key', () => {
+    const promptConfig = {
+      tavily_api_key: 'tvly-test',
+    } as PromptConfig;
+
+    expect(getWebSearchProvider(promptConfig)).toBe(WebSearchProvider.Tavily);
+  });
+});
 
 describe('getWebSearchApiKey', () => {
   it('uses Tavily for dialogs saved before provider selection existed', () => {

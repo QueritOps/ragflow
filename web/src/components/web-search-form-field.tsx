@@ -21,34 +21,31 @@ interface IProps {
 
 const providerOptions = [
   {
-    label: (
-      <span className="flex items-center gap-2">
-        <img
-          src={tavilyLogo}
-          alt=""
-          aria-hidden="true"
-          className="size-4 shrink-0 object-contain"
-        />
-        Tavily
-      </span>
-    ),
+    name: 'Tavily',
+    logo: tavilyLogo,
     value: WebSearchProvider.Tavily,
   },
   {
+    name: 'Querit',
+    logo: queritLogo,
+    value: WebSearchProvider.Querit,
+  },
+]
+  .sort((left, right) => left.name.localeCompare(right.name))
+  .map(({ name, logo, value }) => ({
     label: (
       <span className="flex items-center gap-2">
         <img
-          src={queritLogo}
+          src={logo}
           alt=""
           aria-hidden="true"
           className="size-4 shrink-0 object-contain"
         />
-        Querit
+        {name}
       </span>
     ),
-    value: WebSearchProvider.Querit,
-  },
-];
+    value,
+  }));
 
 const providerKeyConfig = {
   [WebSearchProvider.Tavily]: {
@@ -71,14 +68,11 @@ export function WebSearchFormField({ prefix = '' }: IProps) {
   const form = useFormContext();
   const { t } = useTranslate('chat');
   const providerName = prefixName(prefix, 'prompt_config.web_search_provider');
-  const selectedProvider =
-    useWatch({
-      control: form.control,
-      name: providerName,
-    }) ?? WebSearchProvider.Tavily;
-  const keyConfig =
-    providerKeyConfig[selectedProvider as WebSearchProvider] ??
-    providerKeyConfig[WebSearchProvider.Tavily];
+  const selectedProvider = useWatch({
+    control: form.control,
+    name: providerName,
+  });
+  const keyConfig = providerKeyConfig[selectedProvider as WebSearchProvider];
 
   return (
     <>
@@ -93,8 +87,9 @@ export function WebSearchFormField({ prefix = '' }: IProps) {
             <FormControl>
               <RAGFlowSelect
                 {...field}
-                value={field.value ?? WebSearchProvider.Tavily}
+                value={field.value}
                 options={providerOptions}
+                placeholder={t('webSearchProviderPlaceholder')}
                 triggerTestId="web-search-provider"
                 optionTestIdPrefix="web-search-provider-option"
               />
@@ -103,30 +98,34 @@ export function WebSearchFormField({ prefix = '' }: IProps) {
           </FormItem>
         )}
       />
-      <FormField
-        key={selectedProvider}
-        control={form.control}
-        name={prefixName(prefix, keyConfig.name)}
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel tooltip={t(keyConfig.tip)}>{keyConfig.label}</FormLabel>
-            <FormControl>
-              <PasswordInput
-                {...field}
-                value={field.value ?? ''}
-                placeholder={t(keyConfig.placeholder)}
-                autoComplete="new-password"
-              />
-            </FormControl>
-            <FormDescription>
-              <a href={keyConfig.helpUrl} target="_blank" rel="noreferrer">
-                {t('tavilyApiKeyHelp')}
-              </a>
-            </FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
+      {keyConfig && (
+        <FormField
+          key={selectedProvider}
+          control={form.control}
+          name={prefixName(prefix, keyConfig.name)}
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel tooltip={t(keyConfig.tip)}>
+                {keyConfig.label}
+              </FormLabel>
+              <FormControl>
+                <PasswordInput
+                  {...field}
+                  value={field.value ?? ''}
+                  placeholder={t(keyConfig.placeholder)}
+                  autoComplete="new-password"
+                />
+              </FormControl>
+              <FormDescription>
+                <a href={keyConfig.helpUrl} target="_blank" rel="noreferrer">
+                  {t('tavilyApiKeyHelp')}
+                </a>
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      )}
     </>
   );
 }

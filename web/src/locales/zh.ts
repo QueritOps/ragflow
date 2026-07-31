@@ -1122,6 +1122,7 @@ NER：使用 spaCy NER 和基于规则的关键词提取来抽取实体和关系
       tavilyApiKeyMessage: '请输入你的 Tavily API Key',
       webSearchProvider: '网络搜索服务',
       webSearchProviderTip: '选择启用联网搜索时使用的搜索服务。',
+      webSearchProviderPlaceholder: '请选择网络搜索服务',
       queritApiKeyTip:
         '选择 Querit 后，将使用 Querit 的网络搜索结果补充知识库检索。',
       queritApiKeyMessage: '请输入你的 Querit API Key',

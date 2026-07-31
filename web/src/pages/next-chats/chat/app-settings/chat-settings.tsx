@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Form } from '@/components/ui/form';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { DatasetMetadata, WebSearchProvider } from '@/constants/chat';
+import { DatasetMetadata } from '@/constants/chat';
 import { useSetModalState } from '@/hooks/common-hooks';
 import { useFetchChat, useUpdateChat } from '@/hooks/use-chat-request';
 import { useFindLlmByUuid } from '@/hooks/use-llm-request';
@@ -22,6 +22,7 @@ import ChatBasicSetting from './chat-basic-settings';
 import { ChatPromptEngine } from './chat-prompt-engine';
 import { SavingButton } from './saving-button';
 import { useChatSettingSchema } from './use-chat-setting-schema';
+import { getWebSearchProvider } from '../web-search-api-key';
 
 type ChatSettingsProps = { hasSingleChatBox: boolean };
 
@@ -57,7 +58,6 @@ export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
         reasoning: false,
         cross_languages: [],
         toc_enhance: false,
-        web_search_provider: WebSearchProvider.Tavily,
         reference_metadata: {
           include: false,
           fields: undefined,
@@ -134,8 +134,7 @@ export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
       ...data,
       prompt_config: {
         ...data.prompt_config,
-        web_search_provider:
-          data.prompt_config?.web_search_provider ?? WebSearchProvider.Tavily,
+        web_search_provider: getWebSearchProvider(data.prompt_config),
         reference_metadata: normalizedReferenceMetadata,
       },
       ...llmSettingEnabledValues,

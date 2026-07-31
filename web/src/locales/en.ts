@@ -1237,6 +1237,7 @@ This auto-tagging feature enhances retrieval by adding another layer of domain-s
       webSearchProvider: 'Web search provider',
       webSearchProviderTip:
         'Select the service used when Internet search is enabled.',
+      webSearchProviderPlaceholder: 'Select a web search provider',
       queritApiKeyTip:
         'When Querit is selected, its web search results supplement dataset retrieval.',
       queritApiKeyMessage: 'Please enter your Querit API Key',

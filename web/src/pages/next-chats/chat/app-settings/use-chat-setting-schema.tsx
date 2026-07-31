@@ -37,7 +37,7 @@ export function useChatSettingSchema() {
     querit_api_key: z.string().optional(),
     web_search_provider: z
       .enum([WebSearchProvider.Tavily, WebSearchProvider.Querit])
-      .default(WebSearchProvider.Tavily),
+      .optional(),
     reasoning: z.boolean().optional(),
     cross_languages: z.array(z.string()).optional(),
     toc_enhance: z.boolean().optional(),
