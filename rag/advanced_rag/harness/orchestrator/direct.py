@@ -1,20 +1,25 @@
 """Low mode: direct single-pass search."""
 
+import asyncio
 import logging
 
-from rag.advanced_rag.harness.tools.search import hybrid_search
+from rag.advanced_rag.harness.tools.search import hybrid_search, web_search
 
 _LOG = logging.getLogger(__name__)
 
 
 async def direct_search(state: dict, tools) -> dict:
-    """Single hybrid search → merge into kbinfos."""
+    """Search each configured evidence source once and merge into kbinfos."""
     question = state.get("question", "")
     keywords = state.get("keywords", "")
-    _LOG.info("[Direct search] Looking up the knowledge base for: \"%s\" (keywords: %s)", question, keywords)
+    _LOG.info('[Direct search] Looking up configured evidence sources for: "%s" (keywords: %s)', question, keywords)
 
-    result = await hybrid_search(tools, query=question, keywords=keywords)
-    _merge_kbinfos(tools, result)
+    searches = [hybrid_search(tools, query=question, keywords=keywords)]
+    if tools.has_web():
+        searches.append(web_search(tools, query=question, keywords=keywords))
+
+    for result in await asyncio.gather(*searches):
+        _merge_kbinfos(tools, result)
 
     if not _has_chunks(tools):
         _LOG.info("[Direct search] Found no matching passages.")
