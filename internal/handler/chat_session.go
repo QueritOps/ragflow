@@ -19,9 +19,11 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"ragflow/internal/common"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -67,13 +69,45 @@ func (h *ChatSessionHandler) ListChatSessions(c *gin.Context) {
 		return
 	}
 
+	// Mirror Python's list_sessions query handling: invalid/negative page
+	// values fall back to the default; page_size 0 yields an empty list and a
+	// negative page_size disables pagination.
+	page := 1
+	if pageStr := c.Query("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	pageSize := 30
+	if pageSizeStr := c.Query("page_size"); pageSizeStr != "" {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil {
+			pageSize = ps
+		}
+	}
+
+	orderby := "create_time"
+	if queryOrderby := c.Query("orderby"); queryOrderby != "" {
+		switch queryOrderby {
+		case "create_time", "update_time", "name":
+			orderby = queryOrderby
+		default:
+			common.ResponseWithCodeData(c, common.CodeArgumentError, nil, fmt.Sprintf("invalid orderby field: %s", queryOrderby))
+			return
+		}
+	}
+
+	desc := true
+	if descStr := c.Query("desc"); descStr != "" {
+		desc = !strings.EqualFold(descStr, "false")
+	}
+
 	// Call service to list chat sessions
 	ctx := c.Request.Context()
-	result, err := h.chatSessionService.ListChatSessions(ctx, userID, chatID)
+	result, err := h.chatSessionService.ListChatSessions(ctx, userID, chatID, c.Query("id"), c.Query("name"), orderby, desc, page, pageSize)
 	if err != nil {
-		// Check if it's an authorization error
-		if err.Error() == "Only owner of dialog authorized for this operation" {
-			common.ResponseWithHttpCodeData(c, http.StatusForbidden, 403, false, err.Error())
+		// Mirror Python: ownership failures return code 109 "no authorization"
+		if strings.Contains(err.Error(), "no authorization") {
+			common.ResponseWithCodeData(c, common.CodeAuthenticationError, false, "no authorization")
 			return
 		}
 		common.ResponseWithHttpCodeData(c, http.StatusInternalServerError, 500, nil, err.Error())
@@ -93,6 +127,8 @@ type ChatCompletionsRequest struct {
 	LLMID                  string                   `json:"llm_id,omitempty"`
 	PassAllHistoryMessages *bool                    `json:"pass_all_history_messages,omitempty"`
 	PassAllHistory         *bool                    `json:"pass_all_history,omitempty"`
+	StoreHistoryMessages   *bool                    `json:"store_history_messages,omitempty"`
+	StoreHistory           *bool                    `json:"store_history,omitempty"`
 	Legacy                 bool                     `json:"legacy,omitempty"`
 	Stream                 *bool                    `json:"stream"`
 	Temperature            *float64                 `json:"temperature,omitempty"`
@@ -171,12 +207,26 @@ func (h *ChatSessionHandler) ChatCompletions(c *gin.Context) {
 		passAllHistory = *req.PassAllHistoryMessages
 	}
 
+	// Resolve store_history from either alias (default true, mirrors Python)
+	storeHistory := true
+	if req.StoreHistory != nil {
+		storeHistory = *req.StoreHistory
+	}
+	if req.StoreHistoryMessages != nil {
+		storeHistory = *req.StoreHistoryMessages
+	}
+	if !storeHistory && !passAllHistory {
+		common.ErrorWithCode(c, common.CodeDataError, "`pass_all_history_messages` must be true when `store_history_messages` is false.")
+		return
+	}
+
 	// Remove known keys from rawBody; what remains is passthrough kwargs
 	knownKeys := []string{
 		"chat_id", "session_id", "conversation_id",
 		"messages", "question", "files",
 		"llm_id",
 		"pass_all_history_messages", "pass_all_history",
+		"store_history_messages", "store_history",
 		"legacy", "stream",
 		"temperature", "top_p", "frequency_penalty", "presence_penalty", "max_tokens",
 	}
@@ -207,7 +257,7 @@ func (h *ChatSessionHandler) ChatCompletions(c *gin.Context) {
 				req.ChatID, sessionID,
 				req.Messages, req.Question, req.Files,
 				req.LLMID, genConfig, kwargs,
-				passAllHistory, req.Legacy,
+				passAllHistory, storeHistory, req.Legacy,
 				true, streamChan,
 			)
 		}()
@@ -227,10 +277,15 @@ func (h *ChatSessionHandler) ChatCompletions(c *gin.Context) {
 			req.ChatID, sessionID,
 			req.Messages, req.Question, req.Files,
 			req.LLMID, genConfig, kwargs,
-			passAllHistory, req.Legacy,
+			passAllHistory, storeHistory, req.Legacy,
 			false, nil,
 		)
 		if err != nil {
+			var codedErr *common.CodedError
+			if errors.As(err, &codedErr) {
+				common.ErrorWithCode(c, codedErr.Code, codedErr.Message)
+				return
+			}
 			common.ResponseWithHttpCodeData(c, http.StatusInternalServerError, 500, nil, err.Error())
 			return
 		}
@@ -282,7 +337,8 @@ func (h *ChatSessionHandler) CreateSession(c *gin.Context) {
 		if errors.Is(err, io.EOF) {
 			req = map[string]interface{}{}
 		} else {
-			common.ResponseWithCodeData(c, common.CodeArgumentError, nil, err.Error())
+			// Mirror Python's malformed-JSON contract message.
+			common.ResponseWithCodeData(c, common.CodeArgumentError, nil, "Malformed JSON syntax: Missing commas/brackets or invalid encoding")
 			return
 		}
 	}
@@ -329,7 +385,8 @@ func (h *ChatSessionHandler) DeleteSessions(c *gin.Context) {
 		if errors.Is(err, io.EOF) {
 			req = map[string]interface{}{}
 		} else {
-			common.ResponseWithCodeData(c, common.CodeArgumentError, nil, err.Error())
+			// Mirror Python's malformed-JSON contract message.
+			common.ResponseWithCodeData(c, common.CodeArgumentError, nil, "Malformed JSON syntax: Missing commas/brackets or invalid encoding")
 			return
 		}
 	}
@@ -361,18 +418,10 @@ func (h *ChatSessionHandler) UpdateSession(c *gin.Context) {
 	userID := user.ID
 	chatID, sessionID := c.Param("chat_id"), c.Param("session_id")
 
+	// An empty payload is a valid no-op (mirrors Python's update_session).
 	req := map[string]any{}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		if errors.Is(err, io.EOF) {
-			common.ResponseWithCodeData(c, common.CodeArgumentError, nil,
-				"Request body cannot be empty")
-			return
-		}
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 		common.ResponseWithCodeData(c, common.CodeArgumentError, nil, "Invalid request: "+err.Error())
-		return
-	}
-	if len(req) == 0 {
-		common.ResponseWithCodeData(c, common.CodeArgumentError, nil, "Request body cannot be empty")
 		return
 	}
 

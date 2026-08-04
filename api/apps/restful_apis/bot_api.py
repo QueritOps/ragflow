@@ -36,6 +36,7 @@ from common.metadata_utils import apply_meta_data_filter
 from api.db.services.search_service import SearchService
 from api.db.services.user_service import UserTenantService
 from api.db.joint_services.tenant_model_service import get_tenant_default_model_by_type, resolve_model_config
+from api.apps.restful_apis._generation_params import resolve_llm_setting
 from common.misc_utils import thread_pool_exec
 from api.utils.api_utils import get_error_data_result, get_json_result, add_tenant_id_to_kwargs, get_result, get_request_json, server_error_response, validate_request
 from rag.app.tag import label_question
@@ -48,6 +49,7 @@ from api.utils.reference_metadata_utils import (
     enrich_chunks_with_document_metadata,
     resolve_reference_metadata_preferences,
 )
+from api.utils.pagination_utils import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, validate_rest_api_page, validate_rest_api_page_size
 
 logger = logging.getLogger(__name__)
 
@@ -334,8 +336,8 @@ async def ask_about_embedded(tenant_id=None):
 @validate_request("kb_id", "question")
 async def retrieval_test_embedded(tenant_id=None):
     req = await get_request_json()
-    page = int(req.get("page", 1))
-    size = int(req.get("size", 30))
+    page = validate_rest_api_page(req.get("page", DEFAULT_PAGE))
+    size = validate_rest_api_page_size(req.get("size", DEFAULT_PAGE_SIZE))
     question = req["question"]
     kb_ids = req["kb_id"]
     if isinstance(kb_ids, str):
@@ -495,7 +497,7 @@ async def related_questions_embedded(tenant_id=None):
         chat_model_config = await thread_pool_exec(get_tenant_default_model_by_type, tenant_id, LLMType.CHAT)
     chat_mdl = LLMBundle(tenant_id, chat_model_config)
 
-    gen_conf = search_config.get("llm_setting", {"temperature": 0.9})
+    gen_conf = resolve_llm_setting(search_config.get("llm_setting"))
     prompt = load_prompt("related_question")
     ans = await chat_mdl.async_chat(
         prompt,

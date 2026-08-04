@@ -48,7 +48,7 @@ from api.utils.api_utils import (
     get_result,
     server_error_response,
 )
-from api.utils.pagination_utils import validate_rest_api_page_size
+from api.utils.pagination_utils import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, validate_rest_api_page, validate_rest_api_page_size
 from api.utils.image_utils import store_chunk_image
 from api.utils.reference_metadata_utils import (
     enrich_chunks_with_document_metadata,
@@ -105,6 +105,7 @@ class Chunk(BaseModel):
     questions: list = Field(default_factory=list)
     question_tks: str = ""
     image_id: str = ""
+    doc_type_kwd: str = ""
     available: bool = True
     positions: list[list[int]] = Field(default_factory=list)
 
@@ -325,8 +326,8 @@ async def retrieval_test(tenant_id):
         return get_result(message="Datasets use different embedding models.", code=RetCode.DATA_ERROR)
     if "question" not in req:
         return get_error_data_result("`question` is required.")
-    page = int(req.get("page", 1))
-    size = validate_rest_api_page_size(int(req.get("page_size", 30)))
+    page = validate_rest_api_page(req.get("page", DEFAULT_PAGE))
+    size = validate_rest_api_page_size(req.get("page_size", DEFAULT_PAGE_SIZE))
     question = req["question"].strip() if isinstance(req["question"], str) else req["question"]
     if not question:
         return get_result(data={"total": 0, "chunks": [], "doc_aggs": {}})
@@ -452,8 +453,8 @@ async def list_chunks(tenant_id, dataset_id, document_id):
         return get_error_data_result(message=f"you don't own the document {document_id}")
     doc = doc[0]
     req = request.args
-    page = int(req.get("page", 1))
-    size = validate_rest_api_page_size(int(req.get("page_size", 30)))
+    page = validate_rest_api_page(req.get("page", DEFAULT_PAGE))
+    size = validate_rest_api_page_size(req.get("page_size", DEFAULT_PAGE_SIZE))
     question = req.get("keywords", "")
     chunk_ids = _get_query_id_list(req, "chunk_ids")
     query = {
@@ -489,6 +490,7 @@ async def list_chunks(tenant_id, dataset_id, document_id):
             "questions": chunk.get("question_kwd", []),
             "dataset_id": chunk.get("kb_id", chunk.get("dataset_id")),
             "image_id": chunk.get("img_id", ""),
+            "doc_type_kwd": chunk.get("doc_type_kwd") if isinstance(chunk.get("doc_type_kwd"), str) else "text",
             "available": bool(chunk.get("available_int", 1)),
             "positions": chunk.get("position_int", []),
             "tag_kwd": chunk.get("tag_kwd", []),
@@ -516,6 +518,7 @@ async def list_chunks(tenant_id, dataset_id, document_id):
                 "questions": sres.field[chunk_id].get("question_kwd", []),
                 "dataset_id": sres.field[chunk_id].get("kb_id", sres.field[chunk_id].get("dataset_id")),
                 "image_id": sres.field[chunk_id].get("img_id", ""),
+                "doc_type_kwd": sres.field[chunk_id].get("doc_type_kwd") if isinstance(sres.field[chunk_id].get("doc_type_kwd"), str) else "text",
                 "available": bool(int(sres.field[chunk_id].get("available_int", "1"))),
                 "positions": sres.field[chunk_id].get("position_int", []),
             }
@@ -637,7 +640,7 @@ async def get_document_structure_graph(tenant_id, dataset_id, document_id):
             config = template.get("config") if isinstance(template.get("config"), dict) else {}
             raw_kind = (config.get("kind") if isinstance(config, dict) else "") or template.get("kind") or ""
             kind_norm = _compilation_template_kind(raw_kind)
-            if kind_norm == "artifacts":
+            if kind_norm == "wiki":
                 continue
             seen_configured_ids.add(template_id)
             configured_ids.append(template_id)
@@ -953,16 +956,23 @@ async def add_chunk(tenant_id, dataset_id, document_id):
     req = await get_request_json()
     if is_content_empty(req.get("content")):
         return get_error_data_result(message="`content` is required")
-    if "important_keywords" in req and not isinstance(req["important_keywords"], list):
-        return get_error_data_result("`important_keywords` is required to be a list")
-    if "questions" in req and not isinstance(req["questions"], list):
-        return get_error_data_result("`questions` is required to be a list")
+    if "important_keywords" in req:
+        if not isinstance(req["important_keywords"], list):
+            return get_error_data_result("`important_keywords` is required to be a list")
+        if not all(isinstance(k, str) for k in req["important_keywords"]):
+            return get_error_data_result("`important_keywords` must be a list of strings")
+    if "questions" in req:
+        if not isinstance(req["questions"], list):
+            return get_error_data_result("`questions` is required to be a list")
+        if not all(isinstance(q, str) for q in req["questions"]):
+            return get_error_data_result("`questions` must be a list of strings")
 
     chunk_id = xxhash.xxh64((req["content"] + document_id).encode("utf-8")).hexdigest()
     d = {
         "id": chunk_id,
         "content_ltks": rag_tokenizer.tokenize(req["content"]),
         "content_with_weight": req["content"],
+        "doc_type_kwd": "text",
     }
     d["content_sm_ltks"] = rag_tokenizer.fine_grained_tokenize(d["content_ltks"])
     d["important_kwd"] = req.get("important_keywords", [])
@@ -1018,6 +1028,7 @@ async def add_chunk(tenant_id, dataset_id, document_id):
         "create_time": "create_time",
         "document_keyword": "document",
         "img_id": "image_id",
+        "doc_type_kwd": "doc_type_kwd",
     }
     renamed_chunk = {new_key: d[key] for key, new_key in key_mapping.items() if key in d}
     _ = Chunk(**renamed_chunk)
@@ -1188,9 +1199,9 @@ async def switch_chunks(tenant_id, dataset_id, document_id):
         def _switch_sync():
             e, doc = DocumentService.get_by_id(document_id)
             if not e:
-                return get_error_data_result(message="Document not found!")
+                return get_error_data_result(message="document not found")
             if not doc or str(doc.kb_id) != str(dataset_id):
-                return get_error_data_result(message="Document not found!")
+                return get_error_data_result(message="document not found")
             for cid in req["chunk_ids"]:
                 if not settings.docStoreConn.update(
                     {"id": cid},

@@ -162,15 +162,32 @@ func validateDatasetParserConfigSize(parserConfig map[string]interface{}) error 
 	return nil
 }
 
+// NormalizeDatasetID validates the dataset ID format and returns its
+// dash-less UUID form. Exported so HTTP handlers can mirror the pydantic
+// UUID validation of the Python request models (error code 101).
+func NormalizeDatasetID(id string) (string, error) {
+	return normalizeDatasetID(id)
+}
+
 func normalizeDatasetID(id string) (string, error) {
 	parsedUUID, err := uuid.Parse(id)
 	if err != nil {
-		return "", errors.New("invalid UUID format")
+		return "", errors.New("Invalid UUID format")
 	}
 	if parsedUUID == (uuid.UUID{}) {
-		return "", errors.New("invalid UUID format")
+		return "", errors.New("Invalid UUID format")
 	}
 	return strings.ReplaceAll(parsedUUID.String(), "-", ""), nil
+}
+
+// pythonStringListRepr renders a string slice the way Python prints a list of
+// strings, e.g. ['a', 'b'], for error messages that mirror the Python API.
+func pythonStringListRepr(items []string) string {
+	quoted := make([]string, 0, len(items))
+	for _, item := range items {
+		quoted = append(quoted, "'"+item+"'")
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
 func canvasAccessibleForUser(ctx context.Context, userID, canvasID string) (bool, error) {
