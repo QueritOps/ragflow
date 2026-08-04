@@ -60,7 +60,7 @@ from api.utils.api_utils import (
     get_error_argument_result,
     check_duplicate_ids,
 )
-from api.utils.pagination_utils import validate_rest_api_page_size
+from api.utils.pagination_utils import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, validate_rest_api_page, validate_rest_api_page_size
 from api.utils.validation_utils import (
     UpdateDocumentReq,
     format_validation_error_message,
@@ -212,6 +212,10 @@ async def update_document(tenant_id, dataset_id, document_id):
           type: object
     """
     req = await get_request_json()
+
+    # An explicit null name is a type error, not an unset field.
+    if "name" in req and req["name"] is None:
+        return get_error_data_result(message="Field: <name> - Message: <Input should be a valid string> - Value: <None>")
 
     # Verify ownership and existence of dataset and document
     if not KnowledgebaseService.query(id=dataset_id, tenant_id=tenant_id):
@@ -856,10 +860,14 @@ def _get_docs_with_request(req, dataset_id: str):
     """
     q = req.args
 
-    page = int(q.get("page", 1))
-    page_size = validate_rest_api_page_size(int(q.get("page_size", 30)))
+    # Invalid or negative pagination values fall back to defaults
+    # instead of leaking internal conversion/SQL errors.
+    page = validate_rest_api_page(q.get("page", DEFAULT_PAGE))
+    page_size = validate_rest_api_page_size(q.get("page_size", DEFAULT_PAGE_SIZE))
 
     orderby = q.get("orderby", "create_time")
+    if orderby not in ("create_time", "update_time", "name"):
+        return RetCode.ARGUMENT_ERROR, f"invalid orderby field: {orderby}", [], 0
     desc = str(q.get("desc", "true")).strip().lower() != "false"
     keywords = q.get("keywords", "")
 
@@ -1245,7 +1253,7 @@ async def update_metadata_config(tenant_id, dataset_id, document_id):
     try:
         e, doc = DocumentService.get_by_id(doc.id)
         if not e:
-            return get_data_error_result(message="Document not found!")
+            return get_data_error_result(message="document not found")
     except Exception as e:
         return get_json_result(code=RetCode.EXCEPTION_ERROR, message=repr(e))
 
@@ -1454,7 +1462,7 @@ def _run_sync(user_id: str, req):
             return RetCode.DATA_ERROR, "Tenant not found!"
         e, doc = DocumentService.get_by_id(doc_id)
         if not e:
-            return RetCode.DATA_ERROR, "Document not found!"
+            return RetCode.DATA_ERROR, "document not found"
 
         if str(req["run"]) == TaskStatus.CANCEL.value:
             tasks = list(TaskService.query(doc_id=doc_id))
@@ -1896,7 +1904,7 @@ async def get_artifact(filename):
             return get_data_error_result(message="Invalid filename.")
         ext = os.path.splitext(basename)[1].lower()
         if ext not in ARTIFACT_CONTENT_TYPES:
-            return get_data_error_result(message="Invalid file type.")
+            return get_data_error_result(message="invalid file type")
         session_id = request.args.get("session_id", "")
         if not await thread_pool_exec(_sandbox_artifact_accessible, basename, current_user.id) and not await thread_pool_exec(_sandbox_artifact_session_accessible, session_id, current_user.id):
             return get_data_error_result(message="Artifact not found.")
@@ -2046,11 +2054,11 @@ async def get(doc_id):
     """
     try:
         if not DocumentService.accessible(doc_id, current_user.id):
-            return get_data_error_result(message="Document not found!")
+            return get_data_error_result(message="document not found")
 
         e, doc = DocumentService.get_by_id(doc_id)
         if not e:
-            return get_data_error_result(message="Document not found!")
+            return get_data_error_result(message="document not found")
 
         b, n = File2DocumentService.get_storage_address(doc_id=doc_id)
         data = await thread_pool_exec(settings.STORAGE_IMPL.get, b, n)
@@ -2120,9 +2128,9 @@ async def download(dataset_id, document_id):
     if not document_id:
         return get_error_data_result(message="Specify document_id please.")
     if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=current_user.id):
-        return get_data_error_result(message="Document not found!")
+        return get_data_error_result(message="document not found")
     if not DocumentService.accessible(document_id, current_user.id):
-        return get_data_error_result(message="Document not found!")
+        return get_data_error_result(message="document not found")
     doc = DocumentService.query(kb_id=dataset_id, id=document_id)
     if not doc:
         return get_error_data_result(message=f"The dataset not own the document {document_id}.")
@@ -2182,7 +2190,7 @@ async def download_document(document_id):
     if not document_id:
         return get_error_data_result(message="Specify document_id please.")
     if not DocumentService.accessible(document_id, current_user.id):
-        return get_data_error_result(message="Document not found!")
+        return get_data_error_result(message="document not found")
     doc = DocumentService.query(id=document_id)
     if not doc:
         return get_error_data_result(message=f"The dataset not own the document {document_id}.")

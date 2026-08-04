@@ -365,15 +365,15 @@ def test_chat_list_page_and_page_size_contract(rest_client, clear_chats):
         ("page two", {"page": 2, "page_size": 2}, 0, lambda total: min(max(total - 2, 0), 2), ""),
         ("page three", {"page": 3, "page_size": 2}, 0, lambda total: min(max(total - 4, 0), 2), ""),
         ("page string", {"page": "3", "page_size": 2}, 0, lambda total: min(max(total - 4, 0), 2), ""),
-        ("page negative", {"page": -1, "page_size": 2}, 100, None, "ProgrammingError(1064"),
-        ("page alpha", {"page": "a", "page_size": 2}, 100, None, "ValueError(\"invalid literal for int() with base 10: 'a'\")"),
+        ("page negative", {"page": -1, "page_size": 2}, 0, lambda total: total, ""),
+        ("page alpha", {"page": "a", "page_size": 2}, 0, lambda total: total, ""),
         ("page_size none", {"page_size": None}, 0, lambda total: total, ""),
         ("page_size zero", {"page_size": 0}, 0, lambda total: total, ""),
         ("page_size one", {"page_size": 1}, 0, lambda total: total, ""),
         ("page_size six", {"page_size": 6}, 0, lambda total: total, ""),
         ("page_size string", {"page_size": "1"}, 0, lambda total: total, ""),
         ("page_size negative", {"page_size": -1}, 0, lambda total: total, ""),
-        ("page_size alpha", {"page_size": "a"}, 100, None, "ValueError(\"invalid literal for int() with base 10: 'a'\")"),
+        ("page_size alpha", {"page_size": "a"}, 0, lambda total: total, ""),
     ]
 
     for scenario_name, params, expected_code, expected_count_fn, expected_message in cases:
@@ -403,7 +403,7 @@ def test_chat_list_sorting_contract(rest_client, clear_chats):
         ("orderby create", {"orderby": "create_time"}, 0, descending_names, ""),
         ("orderby update", {"orderby": "update_time"}, 0, descending_names, ""),
         ("orderby name ascending", {"orderby": "name", "desc": "False"}, 0, ascending_names, ""),
-        ("orderby unknown", {"orderby": "unknown"}, 100, None, "AttributeError(\"type object 'Dialog' has no attribute 'unknown'\")"),
+        ("orderby unknown", {"orderby": "unknown"}, 101, None, "invalid orderby field"),
         ("desc none", {"desc": None}, 0, descending_names, ""),
         ("desc true", {"desc": "true"}, 0, descending_names, ""),
         ("desc True", {"desc": "True"}, 0, descending_names, ""),
@@ -765,6 +765,15 @@ def _load_chat_routes_unit_module(monkeypatch):
 
     tenant_model_service_mod = ModuleType("api.db.joint_services.tenant_model_service")
     tenant_model_service_mod.get_model_config_from_provider_instance = lambda *_args, **_kwargs: {}
+
+    def _get_model_config_by_id(_tenant_id, _model_type, model_ref):
+        if model_ref == "tenant-llm-id":
+            return {}
+        raise LookupError(f"unknown tenant model id: {model_ref}")
+
+    tenant_model_service_mod.get_model_config_by_id = _get_model_config_by_id
+    tenant_model_service_mod.resolve_model_id = lambda _tenant_id, _model_type, model_name: model_name
+    tenant_model_service_mod.get_composite_model_name_by_id = lambda model_id: model_id
     tenant_model_service_mod.resolve_model_config = lambda *_args, **_kwargs: {}
     tenant_model_service_mod.get_tenant_default_model_by_type = lambda *_args, **_kwargs: {}
     tenant_model_service_mod.get_api_key = lambda *_args, **_kwargs: SimpleNamespace(id=1)
@@ -947,7 +956,7 @@ def test_chat_session_list_projection_unit(monkeypatch):
         ),
     )
     res = _run(module.list_sessions.__wrapped__("chat-1"))
-    assert res["data"] == []
+    assert res["data"][0]["id"] == "session-1"
 
 
 @pytest.mark.p2
@@ -1149,11 +1158,11 @@ def test_chat_create_accepts_provider_scoped_rerank_id_unit(monkeypatch):
     monkeypatch.setattr(module.KnowledgebaseService, "query", lambda **_kwargs: [_DummyKB()])
     monkeypatch.setattr(module.KnowledgebaseService, "get_by_id", lambda _id: (True, _DummyKB()))
 
-    def _get_model_config_from_provider_instance(**kwargs):
-        query_calls.append(kwargs)
-        return {}
+    def _resolve_model_id(tenant_id, model_type, model_name):
+        query_calls.append({"tenant_id": tenant_id, "model_ref": model_name, "model_type": model_type})
+        return model_name
 
-    monkeypatch.setattr(module, "resolve_model_config", _get_model_config_from_provider_instance)
+    monkeypatch.setattr(module, "resolve_model_id", _resolve_model_id)
 
     def _save(**kwargs):
         saved.update(kwargs)
