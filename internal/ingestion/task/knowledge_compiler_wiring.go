@@ -21,10 +21,12 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"ragflow/internal/dao"
 	"ragflow/internal/engine"
 	enginetypes "ragflow/internal/engine/types"
+	"ragflow/internal/entity"
 	"ragflow/internal/entity/models"
 	kc "ragflow/internal/ingestion/component/knowledge_compiler/common"
 	"ragflow/internal/service"
@@ -45,11 +47,12 @@ import (
 func init() {
 	kc.SetDepsResolver(newKnowledgeCompilerDepsResolver())
 	kc.SetGroupResolver(newKnowledgeCompilerGroupResolver())
+	kc.SetTemplateResolver(newKnowledgeCompilerTemplateResolver())
 }
 
 // newKnowledgeCompilerGroupResolver builds the production GroupResolver backed by
 // the compilation_template DAO. Without it, any config carrying
-// compilation_template_group_ids would fail loud at runtime (the component
+// compilation_template_group_id would fail loud at runtime (the component
 // refuses to silently drop the compilation_template_ids stamp). It resolves each
 // group id to its child template ids so group-based configs stamp the full set
 // on every compiled unit.
@@ -57,6 +60,26 @@ func newKnowledgeCompilerGroupResolver() kc.GroupResolver {
 	tmplDAO := dao.NewCompilationTemplateDAO()
 	return func(ctx context.Context, tenantID string, groupIDs []string) ([]string, error) {
 		return tmplDAO.ResolveGroupTemplateIDs(ctx, tenantID, groupIDs)
+	}
+}
+
+// newKnowledgeCompilerTemplateResolver builds the production TemplateResolver
+// backed by the compilation_template DAO. It loads a single template by id and
+// returns its id, kind (which selects the Go variant via common.KindToVariant),
+// and config (the template "content"). Without it, any config carrying
+// compilation_template_id would fail loudly at runtime.
+func newKnowledgeCompilerTemplateResolver() kc.TemplateResolver {
+	tmplDAO := dao.NewCompilationTemplateDAO()
+	return func(ctx context.Context, tenantID, templateID string) (kc.TemplateInfo, error) {
+		t, err := tmplDAO.GetTemplate(ctx, tenantID, templateID)
+		if err != nil {
+			return kc.TemplateInfo{}, err
+		}
+		return kc.TemplateInfo{
+			ID:     t.ID,
+			Kind:   t.Kind,
+			Config: map[string]any(t.Config),
+		}, nil
 	}
 }
 
@@ -70,6 +93,17 @@ func newKnowledgeCompilerDepsResolver() kc.DepsResolver {
 		if strings.TrimSpace(llmID) == "" {
 			return kc.Deps{}, fmt.Errorf("knowledge_compiler: llm_id is required for production deps resolution")
 		}
+		// Resolve the chat model's context window so RAPTOR can truncate each
+		// cluster's texts to fit the LLM context (mirrors Python self._llm_model.max_length).
+		llmMax := kc.DefaultLLMContextLength
+		// Bound the model-config lookup so a stalled provider/instance DB read
+		// cannot block document ingestion indefinitely.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, _, _, ml, merr := svc.ResolveModelConfig(ctx, tenantID, entity.ModelTypeChat, llmID); merr == nil && ml > 0 {
+			llmMax = ml
+		}
+
 		return kc.Deps{
 			Chat:      &kcChatInvoker{svc: svc, tenantID: tenantID, llmID: llmID},
 			Embed:     &kcEmbedder{svc: svc, tenantID: tenantID, embdID: embeddingModel},
@@ -77,6 +111,7 @@ func newKnowledgeCompilerDepsResolver() kc.DepsResolver {
 			// HistoricalKNN / Redis are optional (wiki historical dedup,
 			// datasetnav lock). They are wired separately when the
 			// surrounding pipeline supplies the backing services.
+			LLMMaxLength: llmMax,
 		}, nil
 	}
 }
@@ -101,8 +136,16 @@ func (c *kcChatInvoker) Chat(ctx context.Context, req kc.ChatRequest) (*kc.ChatR
 	// Python's knowledge compilation pins per-call-site temperatures
 	// (extraction 0.1, merge judging 0.0); nil leaves the driver default.
 	var config *models.ChatConfig
-	if req.Temperature != nil {
-		config = &models.ChatConfig{Temperature: req.Temperature}
+	if req.Temperature != nil || req.MaxTokens != nil {
+		config = &models.ChatConfig{}
+		if req.Temperature != nil {
+			config.Temperature = req.Temperature
+		}
+		// MaxTokens caps the generated summary length (mirrors Python's
+		// {"max_tokens": max(self._max_token, 512)}, issue #10235).
+		if req.MaxTokens != nil {
+			config.MaxTokens = req.MaxTokens
+		}
 	}
 	resp, err := c.svc.Chat(ctx, c.tenantID, llmID, msgs, config)
 	if err != nil {

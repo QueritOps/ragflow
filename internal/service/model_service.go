@@ -159,7 +159,9 @@ type CheckConnectionModelInfo struct {
 }
 
 type CheckConnectionRequest struct {
-	APIKey     string                     `json:"api_key"`
+	// APIKey may be a JSON string or a JSON object (credential bundles such
+	// as XunFei Spark's); the handler normalizes it to a string before use.
+	APIKey     json.RawMessage            `json:"api_key"`
 	Region     string                     `json:"region"`
 	BaseURL    string                     `json:"base_url"`
 	InstanceID string                     `json:"instance_id"`
@@ -3701,10 +3703,6 @@ func (m *ModelProviderService) AddModel(ctx context.Context, request *AddModelRe
 		return common.CodeBadRequest, errors.New("model_name is required")
 	}
 
-	if len(request.ModelTypes) == 0 {
-		return common.CodeBadRequest, errors.New("model_type is required")
-	}
-
 	tenants, err := m.userTenantDAO.GetByUserIDAndRole(ctx, dao.DB, userID, "owner")
 	if err != nil {
 		return common.CodeServerError, err
@@ -3739,18 +3737,15 @@ func (m *ModelProviderService) AddModel(ctx context.Context, request *AddModelRe
 		return common.CodeServerError, err
 	}
 
-	// Compute model type bitmask.
+	// Compute model type bitmask. Matches Python's calculate_model_type:
+	// empty and unrecognized type names are ignored, not rejected.
 	combinedType := entity.ModelType(0)
 	for _, rawType := range request.ModelTypes {
 		mt := strings.TrimSpace(rawType)
 		if mt == "" {
 			continue
 		}
-		t := entity.ModelTypeFromString(mt)
-		if t == 0 {
-			return common.CodeBadRequest, fmt.Errorf("invalid model type: %s", mt)
-		}
-		combinedType |= t
+		combinedType |= entity.ModelTypeFromString(mt)
 	}
 
 	maxTokens := request.MaxTokens

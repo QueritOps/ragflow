@@ -469,6 +469,9 @@ Example: A 1 KB message with 1024-dim embedding uses ~9 KB. The 5 MB default lim
       updateTooltip:
         '{{newlyUploaded}} new, {{removed}} removed documents found. Click to compile and merge into current Wiki.',
       updateSheetTitle: 'Update Wiki',
+      updateStructureSheetTitle: 'Update {{name}}',
+      updateStructureTooltip:
+        '{{newlyUploaded}} new, {{removed}} removed documents found. Click to update the {{name}}.',
       viewUpdateLogs: 'View update logs',
       log: 'Log',
       noSkills: 'No skills yet',
@@ -929,9 +932,14 @@ Example: A 1 KB message with 1024-dim embedding uses ~9 KB. The 5 MB default lim
       promptTip:
         'Use the system prompt to describe the task for the LLM, specify how it should respond, and outline other miscellaneous requirements. The system prompt is often used in conjunction with keys (variables), which serve as various data inputs for the LLM. Use a forward slash `/` or the (x) button to show the keys to use.',
       promptMessage: 'Prompt is required',
-      promptText: `Please summarize the following paragraphs. Be careful with the numbers, do not make things up. Paragraphs as following:
-      {cluster_content}
-The above is the content you need to summarize.`,
+      promptText: `Summarize the paragraphs below without inventing facts or changing numbers.
+Output exactly two parts in the same language as the source:
+1. First line: a concise title only.
+2. Following lines: a concise summary of the content.
+Do not output labels, Markdown headings, bullet points, or any other commentary.
+
+Paragraphs:
+{cluster_content}`,
       maxToken: 'Max token',
       maxTokenTip: 'The maximum number of tokens per generated summary chunk.',
       maxTokenMessage: 'Max token is required',
@@ -951,6 +959,7 @@ The above is the content you need to summarize.`,
       randomSeedMessage: 'Random seed is required',
       entityTypes: 'Entity types',
       compilationTemplate: 'Operator',
+      createTemplate: 'Create template',
       scopeFile: 'File',
       vietnamese: 'Vietnamese',
       pageRank: 'Page rank',
@@ -1074,7 +1083,7 @@ This auto-tagging feature enhances retrieval by adding another layer of domain-s
       assistantAvatar: 'Assistant avatar',
       language: 'Language',
       emptyResponse: 'Empty response',
-      emptyResponseTip: `Set this as a response if no results are retrieved from the datasets for your query, or leave this field blank to allow the LLM to improvise when nothing is found.`,
+      emptyResponseTip: `Set this as a response if no results are retrieved from the datasets for your query, or leave this field blank to allow the LLM to improvise when nothing is found. This setting only takes effect when Thinking Mode is set to Naive.`,
       emptyResponseMessage: `Empty response will be triggered when nothing relevant is retrieved from datasets. You must clear the 'Empty response' field if no dataset is selected.`,
       emptyResponsePlaceholder:
         'The answer you are looking for is not found in the dataset!',
@@ -1110,6 +1119,7 @@ This auto-tagging feature enhances retrieval by adding another layer of domain-s
       variableTip: `Used together with RAGFlow's chat assistant management APIs, variables can help develop more flexible system prompt strategies. The defined variables will be used by 'System prompt' as part of the prompts for the LLM. {knowledge} is a reserved special variable representing chunks retrieved from specified dataset(s), and all variables should be enclosed in curly braces {} in the 'System prompt'. See https://ragflow.io/docs/dev/set_chat_variables for details.`,
       add: 'Add',
       key: 'Key',
+      variableKeyMessage: 'Please input the variable key',
       optional: 'Optional',
       operation: 'Operation',
       model: 'Model',
@@ -1889,14 +1899,27 @@ Example: Virtual Hosted Style`,
       instruction: 'Instruction',
       globalRules: 'Global rules',
       globalRulesPlaceholder: 'Input global compilation rules',
+      plan: 'Plan (grouping wiki pages by topic via LLM)',
       raptorTreeSettings: 'RAPTOR tree settings',
       summarizationPrompt: 'Summarization prompt',
       maxToken: 'Max token',
       maxTokenRequired: 'Please input max token',
       threshold: 'Threshold',
+      clusteringThreshold: 'Clustering threshold',
+      clusteringThresholdTip:
+        'Sets the percentile used to split clusters by adjacent chunk similarity. Higher values create more cluster boundaries.',
+      clusteringRatio: 'Clustering ratio',
+      clusteringRatioTip:
+        'Sets the maximum number of clusters as a fraction of the input chunks. Lower values produce fewer clusters.',
       rechunkByTreeLeaves: 'Re-chunk by tree leaves',
       rechunkByTreeLeavesTip:
         "Merge each leaf cluster's source chunks into a single replacement chunk. Originals are kept but marked unavailable for retrieval. Only one tree template per group may enable this.",
+      rechunkInput: 'Re-chunk parser output',
+      rechunkInputTip:
+        'Let the LLM determine chunk boundaries based on the knowledge compilation task.',
+      rechunkRules: 'Rechunking rules',
+      rechunkRulesPlaceholder:
+        'Describe how the LLM should group source chunks for this compilation task.',
       jsonPreview: 'JSON preview',
       processFlow: 'Process flow',
       processFlowComingSoon: 'Process flow preview coming soon',
@@ -2282,6 +2305,17 @@ Example: Virtual Hosted Style`,
         formulaFormat: 'Formula Format',
         tableFormat: 'Table Format',
         csFormat: 'Chemical Structural Formula Format',
+        formatOptions: {
+          url: 'URL',
+          base64: 'Base64',
+          none: 'None',
+          latex: 'LaTeX',
+          mathml: 'MathML',
+          ascii: 'ASCII',
+          html: 'HTML',
+          markdown: 'Markdown',
+          image: 'Image',
+        },
         sectionFeatureConfig: 'Feature Config',
         enableInlineImage: 'Enable Inline Image',
         enableTableImage: 'Enable Table Image',
@@ -2368,6 +2402,7 @@ Example: Virtual Hosted Style`,
       modified: 'Modified',
       created: 'Created',
       deleted: 'Deleted',
+      noLangfuseConfigToDelete: 'No Langfuse configuration to delete',
       renamed: 'Renamed',
       operated: 'Operated',
       updated: 'Updated',
