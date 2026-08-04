@@ -16,7 +16,11 @@
 
 from typing import Protocol
 
+from rag.utils.querit_conn import Querit
 from rag.utils.tavily_conn import Tavily
+
+WEB_SEARCH_PROVIDER_TAVILY = "tavily"
+WEB_SEARCH_PROVIDER_QUERIT = "querit"
 
 
 class WebSearchProvider(Protocol):
@@ -24,11 +28,25 @@ class WebSearchProvider(Protocol):
         """Return web results in RAGFlow's chunk and document aggregate shape."""
 
 
+def _get_api_key(prompt_config: dict, field: str) -> str:
+    api_key = prompt_config.get(field)
+    return api_key.strip() if isinstance(api_key, str) else ""
+
+
 def has_web_search_provider(prompt_config: dict | None) -> bool:
-    return bool(prompt_config and prompt_config.get("tavily_api_key"))
+    if not prompt_config:
+        return False
+    provider = prompt_config.get("web_search_provider", WEB_SEARCH_PROVIDER_TAVILY)
+    if provider == WEB_SEARCH_PROVIDER_TAVILY:
+        return bool(_get_api_key(prompt_config, "tavily_api_key"))
+    if provider == WEB_SEARCH_PROVIDER_QUERIT:
+        return bool(_get_api_key(prompt_config, "querit_api_key"))
+    return False
 
 
 def create_web_search_provider(prompt_config: dict | None) -> WebSearchProvider | None:
-    if not has_web_search_provider(prompt_config):
+    if not prompt_config or not has_web_search_provider(prompt_config):
         return None
-    return Tavily(prompt_config["tavily_api_key"])
+    if prompt_config.get("web_search_provider", WEB_SEARCH_PROVIDER_TAVILY) == WEB_SEARCH_PROVIDER_QUERIT:
+        return Querit(_get_api_key(prompt_config, "querit_api_key"))
+    return Tavily(_get_api_key(prompt_config, "tavily_api_key"))
